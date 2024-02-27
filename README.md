@@ -9,14 +9,38 @@ Tested on RK3566 (Radxa Zero 3W).
 
 Build on the RK3566 linux system directly.
 
-## Dependencies
+## Install dependencies
 - rockchip_mpp
-- pthread
-- drm
-- cairo
+```
+git clone https://github.com/rockchip-linux/mpp.git
+cmake CMakeLists.txt
+make
+sudo make install
+```
+- drm, cairo 
+```
+sudo apt install libdrm-dev libcairo-dev
+```
 
-## Command
+## Build Instructions
 ```
 cmake CMakeLists.txt
 make
 ```
+
+### Run
+
+- without OSD
+```
+./fpvue
+```
+- with OSD
+```
+./fpvue --osd
+```
+
+### Known issues
+
+1. OSD does not load if the program is not started from the project root folder
+2. OSD is flickering
+3. Properly support full screen and scaling video

@@ -698,13 +698,13 @@ static void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_ou
 	cairo_rectangle(cr, 1600, 0, 400, 150); 
 	cairo_fill(cr);
 
-	cairo_surface_t *framerate = cairo_image_surface_create_from_png ("/home/radxa/Sandbox/mpidec/icons/framerate.png");
+	cairo_surface_t *framerate = cairo_image_surface_create_from_png ("icons/framerate.png");
 	cairo_set_source_surface (cr, framerate, 1630, 17);
 	cairo_paint (cr);
-	cairo_surface_t *lat = cairo_image_surface_create_from_png ("/home/radxa/Sandbox/mpidec/icons/latency.png");
+	cairo_surface_t *lat = cairo_image_surface_create_from_png ("icons/latency.png");
 	cairo_set_source_surface (cr, lat, 1630, 44);
 	cairo_paint (cr);
-	cairo_surface_t* net = cairo_image_surface_create_from_png("/home/radxa/Sandbox/mpidec/icons/network.png");
+	cairo_surface_t* net = cairo_image_surface_create_from_png("icons/network.png");
 	cairo_set_source_surface (cr, net, 1630, 71);
 	cairo_paint (cr);
 
