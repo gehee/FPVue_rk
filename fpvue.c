@@ -118,9 +118,8 @@ void *frame_thread(void *param)
 				MppFrameFormat fmt = mpp_frame_get_fmt(frame);
 				assert((fmt == MPP_FMT_YUV420SP) || (fmt == MPP_FMT_YUV420SP_10BIT));
 
-				printf("frame changed %d(%d)x%d(%d)\n", output_list->video_frm_width, hor_stride, output_list->video_frm_height, ver_stride);
+				printf("frame info changed %d(%d)x%d(%d)\n", output_list->video_frm_width, hor_stride, output_list->video_frm_height, ver_stride);
 			
-				// expand to full screen
 				output_list->video_fb_x = 0;
 				output_list->video_fb_y = 0;
 				output_list->video_fb_width = output_list->video_crtc_width;
@@ -190,7 +189,7 @@ void *frame_thread(void *param)
 
 				drmModeAtomicSetCursor(output_list->video_request, 0);
 				ret = modeset_atomic_prepare_commit(drm_fd, output_list, output_list->video_request, &output_list->plane_video, 
-					mpi.frame_to_drm[0].fb_id, output_list->video_fb_width, output_list->video_fb_height, -1 /*zpos*/);
+					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, -1 /*zpos*/);
 				assert(ret >= 0);
 				ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
 				assert(!ret);

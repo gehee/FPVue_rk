@@ -30,11 +30,6 @@ make
 
 ### Run
 
-- without OSD
-```
-./fpvue
-```
-- with OSD
 ```
 ./fpvue --osd
 ```
@@ -43,3 +38,4 @@ make
 
 1. OSD is flickering
 2. Properly support full screen and scaling video
+3. No image when running without OSD
