@@ -41,6 +41,5 @@ make
 
 ### Known issues
 
-1. OSD does not load if the program is not started from the project root folder
-2. OSD is flickering
-3. Properly support full screen and scaling video
+1. OSD is flickering
+2. Properly support full screen and scaling video

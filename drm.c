@@ -672,7 +672,8 @@ static int modeset_perform_modeset_osd(int fd, struct modeset_output *output_lis
 	return ret;
 }
 
-static void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *out, int fps, uint64_t latency, long long bw_stats[10], int bw_curr)
+static void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *out, int fps, uint64_t latency, long long bw_stats[10], int bw_curr, 
+cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon)
 {
 	struct modeset_buf *buf;
 	unsigned int j,k,off,random;
@@ -687,8 +688,6 @@ static void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_ou
 	    }
 	}
 
-
-
 	surface = cairo_image_surface_create_for_data (buf->map, CAIRO_FORMAT_ARGB32, buf->width, buf->height,buf->stride);
 	cr = cairo_create (surface);
 	cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
@@ -698,14 +697,11 @@ static void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_ou
 	cairo_rectangle(cr, 1600, 0, 400, 150); 
 	cairo_fill(cr);
 
-	cairo_surface_t *framerate = cairo_image_surface_create_from_png ("icons/framerate.png");
-	cairo_set_source_surface (cr, framerate, 1630, 17);
+	cairo_set_source_surface (cr, fps_icon, 1630, 17);
 	cairo_paint (cr);
-	cairo_surface_t *lat = cairo_image_surface_create_from_png ("icons/latency.png");
-	cairo_set_source_surface (cr, lat, 1630, 44);
+	cairo_set_source_surface (cr, lat_icon, 1630, 44);
 	cairo_paint (cr);
-	cairo_surface_t* net = cairo_image_surface_create_from_png("icons/network.png");
-	cairo_set_source_surface (cr, net, 1630, 71);
+	cairo_set_source_surface (cr, net_icon, 1630, 71);
 	cairo_paint (cr);
 
 	cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);

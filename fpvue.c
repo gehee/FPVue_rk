@@ -35,6 +35,8 @@
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
 #define MAX_FRAMES 24		// min 16 and 20+ recommended (mpp/readme.txt)
 
+#define PATH_MAX	4096
+
 struct {
 	MppCtx		  ctx;
 	MppApi		  *mpi;
@@ -305,13 +307,46 @@ void sig_handler(int signum)
 
 // osd_thread
 
+char * sc_file_get_executable_dir(void) {
+	// <https://stackoverflow.com/a/1024937/1987178>
+    char buf[PATH_MAX + 1]; // +1 for the null byte
+    ssize_t len = readlink("/proc/self/exe", buf, PATH_MAX);
+    if (len == -1) {
+        perror("readlink");
+        return NULL;
+    }
+	int i;
+	int end = len;	
+	for (i = 0; i < len; i++) {
+		if (buf[i] == '/') {
+			end = i;
+		}
+	}
+	
+    buf[end] = '\0';
+    return strdup(buf);
+}
+
 void *osd_thread(void *param) {
+	// Load icons from local folder.
+	// TODO(geehe) embed into source file.
+	char * icon_dir = sc_file_get_executable_dir();
+	char * icon_path = (char *) malloc(1 + strlen(icon_dir)+ strlen("/icons/framerate.png") );
+    strcpy(icon_path, icon_dir);
+    strcat(icon_path, "/icons/framerate.png");
+	cairo_surface_t *fps_icon = cairo_image_surface_create_from_png(icon_path);
+    strcpy(icon_path, icon_dir);
+    strcat(icon_path, "/icons/latency.png");
+	cairo_surface_t *lat_icon = cairo_image_surface_create_from_png(icon_path);
+    strcpy(icon_path, icon_dir);
+    strcat(icon_path, "/icons/network.png");
+	cairo_surface_t* net_icon = cairo_image_surface_create_from_png(icon_path);
+
 	modeset_perform_modeset_osd(drm_fd, output_list);
 	do {
-		modeset_draw_osd(drm_fd, &output_list->plane_osd, output_list, current_framerate, current_latency, bw_stats, bw_curr);
+		modeset_draw_osd(drm_fd, &output_list->plane_osd, output_list, current_framerate, current_latency, bw_stats, bw_curr, fps_icon, lat_icon, net_icon);
 		usleep(1000000);
     } while (!signal_flag);
-
 	modeset_cleanup(drm_fd, output_list);
 }
 
