@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "rkrga.h": "c",
+        "fcntl.h": "c",
+        "videodev2.h": "c"
+    }
+}
