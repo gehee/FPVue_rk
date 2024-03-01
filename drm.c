@@ -449,8 +449,8 @@ static void modeset_destroy_fb(int fd, struct modeset_buf *buf)
 static int modeset_setup_framebuffers(int fd, drmModeConnector *conn,
 				      struct modeset_output *out)
 {
-	out->bufs[0].width = 1920;//conn->modes[0].hdisplay;
-	out->bufs[0].height = 200;//conn->modes[0].vdisplay;
+	out->bufs[0].width = conn->modes[0].hdisplay;
+	out->bufs[0].height = conn->modes[0].vdisplay;
 	out->bufs[1].width = out->bufs[0].width;
 	out->bufs[1].height = out->bufs[0].height;
 	int ret = modeset_create_fb(fd, &out->bufs[0]);

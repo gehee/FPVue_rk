@@ -38,4 +38,3 @@ make
 
 1. OSD is flickering
 2. Running with OSD enabled does not restore zpos properly, causing black screen on next run without osd.
-3. OSD does not scale to the full screen.
