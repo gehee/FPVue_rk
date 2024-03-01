@@ -658,7 +658,7 @@ static int modeset_perform_modeset_osd(int fd, struct modeset_output *output_lis
 	flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
 	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
 	if (ret < 0) {
-		fprintf(stderr, "test-only atomic commit failed, %d\n", errno);
+		fprintf(stderr, "test-only atomic commit failed for osd plane, %d\n", errno);
 		return ret;
 	}
 
@@ -666,13 +666,14 @@ static int modeset_perform_modeset_osd(int fd, struct modeset_output *output_lis
 	flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
 	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
 	if (ret < 0)
-		fprintf(stderr, "modeset atomic commit failed, %d\n", errno);
+		fprintf(stderr, "modeset atomic commit failed for osd plane, %d\n", errno);
 
 	return ret;
 }
 
-static void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *out, int fps, uint64_t latency, long long bw_stats[10], int bw_curr, 
-cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon)
+static void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *out, 
+	int fps, uint64_t latency_avg, uint64_t latency_min, uint64_t latency_max, long long bw_stats[10], int bw_curr, 
+	cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon)
 {
 	struct modeset_buf *buf;
 	unsigned int j,k,off,random;
@@ -711,7 +712,7 @@ cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon)
 	
 	
 	cairo_move_to (cr,1660,62);
-	sprintf(str, "%.2f ms", latency/1000.0);
+	sprintf(str, "%.2f ms (%.2f, %.2f)", latency_avg/1000.0, latency_min/1000.0, latency_max/1000.0);
 	cairo_show_text (cr, str);
 	
 
@@ -724,8 +725,6 @@ cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon)
 		if (h<0) {
 			h = 0;
 		}
-		// cairo_rectangle(cr, gx, 110, pw, h); 
-		// cairo_fill(cr);
 		gx+=pw;
 		if (bw_stats[i%10]>0) {
 			avg_bw += bw_stats[i%10];

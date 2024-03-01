@@ -80,9 +80,14 @@ pthread_mutex_t video_mutex;
 pthread_cond_t video_cond;
 
 // OSD Vars
-int current_framerate = 0;
-uint64_t current_latency = 0;
-int bw_curr=0;
+struct video_stats {
+	int current_framerate;
+	uint64_t current_latency;
+	uint64_t max_latency;
+	uint64_t min_latency;
+};
+struct video_stats osd_stats;
+int bw_curr = 0;
 long long bw_stats[10];
 
 // Headers
@@ -245,6 +250,9 @@ void *display_thread(void *param)
 {
 	int ret;	
 	int frame_counter = 0;
+	uint64_t latency_avg[200];
+	uint64_t min_latency = 1844674407370955161;
+	uint64_t max_latency = 0;
     struct timespec fps_start, fps_end;
 	clock_gettime(CLOCK_MONOTONIC, &fps_start);
 
@@ -283,15 +291,30 @@ void *display_thread(void *param)
 			clock_gettime(CLOCK_MONOTONIC, &fps_end);
 			uint64_t time_us=(fps_end.tv_sec - fps_start.tv_sec)*1000000ll + ((fps_end.tv_nsec - fps_start.tv_nsec)/1000ll) % 1000000ll;
 			if (time_us >= 1000000) {
-				current_framerate = frame_counter;
-				frame_counter = 0;
+				uint64_t sum = 0;
+				for (int i = 0; i < frame_counter; ++i) {
+					sum += latency_avg[i];
+					if (latency_avg[i] > max_latency) {
+						max_latency = latency_avg[i];
+					}
+					if (latency_avg[i] < min_latency) {
+						min_latency = latency_avg[i];
+					}
+				}
+				osd_stats.current_latency = sum / (frame_counter);
+				osd_stats.max_latency = max_latency;
+				osd_stats.min_latency = min_latency;
+				osd_stats.current_framerate = frame_counter;
+				
 				fps_start = fps_end;
+				frame_counter = 0;
+				max_latency = 0;
+				min_latency = 1844674407370955161;
 			}
 			
 			struct timespec rtime = frame_stats[output_list->video_poc];
-		    current_latency = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
-		
-			// printf("current_latency=%.2f ms, current_framerate=%d\n", current_latency/1000.0, current_framerate);
+		    latency_avg[frame_counter] = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
+			// printf("decoding current_latency=%.2f ms\n",  latency_avg[frame_counter]/1000.0);
 		}
 	}
 end:	
@@ -347,7 +370,9 @@ void *osd_thread(void *param) {
 
 	modeset_perform_modeset_osd(drm_fd, output_list);
 	do {
-		modeset_draw_osd(drm_fd, &output_list->plane_osd, output_list, current_framerate, current_latency, bw_stats, bw_curr, fps_icon, lat_icon, net_icon);
+		modeset_draw_osd(drm_fd, &output_list->plane_osd, output_list, 
+			osd_stats.current_framerate, osd_stats.current_latency, osd_stats.min_latency, osd_stats.max_latency, bw_stats, bw_curr, 
+			fps_icon, lat_icon, net_icon);
 		usleep(1000000);
     } while (!signal_flag);
 	modeset_cleanup(drm_fd, output_list);
