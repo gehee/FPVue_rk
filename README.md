@@ -37,4 +37,4 @@ make
 ### Known issues
 
 1. OSD is flickering
-2. Running with OSD enabled does not restore zpos properly, causing black screen on next run without osd.
+2. Crashes when video feed resolution is higher than the screen resolution.

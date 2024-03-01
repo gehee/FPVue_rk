@@ -648,7 +648,6 @@ static int modeset_perform_modeset_osd(int fd, struct modeset_output *output_lis
 
 	// Get zpos from video plane to make sure it overlays.
 	int64_t zpos = get_property_value(fd, output_list->plane_video.props, "zpos") + 1;
-
 	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, zpos);
 	if (ret < 0) {
 		fprintf(stderr, "prepare atomic commit failed, %d\n", errno);
@@ -755,8 +754,26 @@ cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon)
 	out->buf_switch ^= 1;
 }
 
+static void restore_osd_plane_zpos(int fd, struct modeset_output *output_list) {
+	// restore osd zpos
+	int ret, flags;
+	struct drm_object *plane = &output_list->plane_osd;
+	struct modeset_buf *buf = &output_list->bufs[output_list->buf_switch ^ 1];
+
+	// TODO(geehe) Find a more elegant way to do this.
+	int64_t zpos = get_property_value(fd, output_list->plane_osd.props, "zpos");
+	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, zpos);
+	if (ret < 0) {
+		fprintf(stderr, "prepare atomic commit failed, %d\n", errno);
+		return;
+	}
+	ret = drmModeAtomicCommit(fd, output_list->osd_request, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+	if (ret < 0) 
+		fprintf(stderr, "modeset atomic commit failed, %d\n", errno);
+}
 
 static void modeset_cleanup(int fd, struct modeset_output *output_list)
 {
+	restore_osd_plane_zpos(fd,output_list);
 	modeset_output_destroy(fd, output_list);
 }
