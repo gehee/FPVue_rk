@@ -7,8 +7,9 @@ project(fpvue)
 set(CMAKE_CXX_STANDARD 11)
 
 set(SOURCE_FILES drm.c
+				osd.c
 				rtp_frame.c
-				fpvue.c)
+				main.c)
 
 include_directories("/usr/include/libdrm" "/usr/local/include/rockchip" "/usr/include/cairo")
 

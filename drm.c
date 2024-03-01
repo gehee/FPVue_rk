@@ -1,10 +1,5 @@
-/*
- * drm.c offers a list of methods to use linux DRM and perform modeset to display video frames and the OSD. 
- * It uses two different planes for the OSD and the video feed.
- * The OSD is drawn using lib cairo.
- */
+#include "drm.h"
 
-#define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -23,55 +18,7 @@
 #include <rk_mpi.h>
 #include <assert.h>
 
-struct drm_object {
-	drmModeObjectProperties *props;
-	drmModePropertyRes **props_info;
-	uint32_t id;
-};
-
-struct modeset_buf {
-	uint32_t width;
-	uint32_t height;
-	uint32_t stride;
-	uint32_t size;
-	uint32_t handle;
-	uint8_t *map;
-	uint32_t fb;
-};
-
-struct modeset_output {
-	struct drm_object connector;
-	struct drm_object crtc;
-	drmModeCrtc *saved_crtc;
-
-	// OSD variables
-	drmModeAtomicReq *osd_request;
-	unsigned int buf_switch;
-	struct modeset_buf bufs[2];
-
-	struct drm_object plane_osd;
-
-	drmModeModeInfo mode;
-	uint32_t mode_blob_id;
-	uint32_t crtc_index;
-
-	bool cleanup;
-
-	// Video variables
-	drmModeAtomicReq *video_request;
-	struct drm_object plane_video;
-	int video_crtc_width;
-	int video_crtc_height;
-	RK_U32 video_frm_width;
-	RK_U32 video_frm_height;
-	int video_fb_x, video_fb_y, video_fb_width, video_fb_height;
-	int video_fb_id;
-	int video_skipped_frames;
-	int video_poc;
-};
-
-
-static int modeset_open(int *out, const char *node)
+int modeset_open(int *out, const char *node)
 {
 	int fd, ret;
 	uint64_t cap;
@@ -114,7 +61,7 @@ static int modeset_open(int *out, const char *node)
 }
 
 
-static int64_t get_property_value(int fd, drmModeObjectPropertiesPtr props,
+int64_t get_property_value(int fd, drmModeObjectPropertiesPtr props,
 				  const char *name)
 {
 	drmModePropertyPtr prop;
@@ -138,7 +85,7 @@ static int64_t get_property_value(int fd, drmModeObjectPropertiesPtr props,
 }
 
 
-static void modeset_get_object_properties(int fd, struct drm_object *obj,
+void modeset_get_object_properties(int fd, struct drm_object *obj,
 					  uint32_t type)
 {
 	const char *type_str;
@@ -171,7 +118,7 @@ static void modeset_get_object_properties(int fd, struct drm_object *obj,
 }
 
 
-static int set_drm_object_property(drmModeAtomicReq *req, struct drm_object *obj,
+int set_drm_object_property(drmModeAtomicReq *req, struct drm_object *obj,
 				   const char *name, uint64_t value)
 {
 	int i;
@@ -192,7 +139,7 @@ static int set_drm_object_property(drmModeAtomicReq *req, struct drm_object *obj
 }
 
 
-static int modeset_find_crtc(int fd, drmModeRes *res, drmModeConnector *conn, struct modeset_output *out)
+int modeset_find_crtc(int fd, drmModeRes *res, drmModeConnector *conn, struct modeset_output *out)
 {
 	drmModeEncoder *enc;
 	unsigned int i, j;
@@ -256,8 +203,8 @@ static int modeset_find_crtc(int fd, drmModeRes *res, drmModeConnector *conn, st
 	return -ENOENT;
 }
 
-static const char* drm_fourcc_to_string(uint32_t fourcc) {
-    static char result[5];
+const char* drm_fourcc_to_string(uint32_t fourcc) {
+    char* result = malloc(5);
     result[0] = (char)((fourcc >> 0) & 0xFF);
     result[1] = (char)((fourcc >> 8) & 0xFF);
     result[2] = (char)((fourcc >> 16) & 0xFF);
@@ -266,8 +213,7 @@ static const char* drm_fourcc_to_string(uint32_t fourcc) {
     return result;
 }
 
-
-static int modeset_find_plane(int fd, struct modeset_output *out, struct drm_object *plane_out, uint32_t plane_format)
+int modeset_find_plane(int fd, struct modeset_output *out, struct drm_object *plane_out, uint32_t plane_format)
 {
 	drmModePlaneResPtr plane_res;
 	bool found_plane = false;
@@ -315,7 +261,7 @@ static int modeset_find_plane(int fd, struct modeset_output *out, struct drm_obj
 }
 
 
-static void modeset_drm_object_fini(struct drm_object *obj)
+void modeset_drm_object_fini(struct drm_object *obj)
 {
 	for (int i = 0; i < obj->props->count_props; i++)
 		drmModeFreeProperty(obj->props_info[i]);
@@ -324,12 +270,12 @@ static void modeset_drm_object_fini(struct drm_object *obj)
 }
 
 
-static int modeset_setup_objects(int fd, struct modeset_output *out)
+int modeset_setup_objects(int fd, struct modeset_output *out)
 {
 	struct drm_object *connector = &out->connector;
 	struct drm_object *crtc = &out->crtc;
-	struct drm_object *plane_video = &out->plane_video;
-	struct drm_object *plane_osd = &out->plane_osd;
+	struct drm_object *plane_video = &out->video_plane;
+	struct drm_object *plane_osd = &out->osd_plane;
 
 	modeset_get_object_properties(fd, connector, DRM_MODE_OBJECT_CONNECTOR);
 	if (!connector->props)
@@ -356,16 +302,16 @@ out_conn:
 }
 
 
-static void modeset_destroy_objects(int fd, struct modeset_output *out)
+void modeset_destroy_objects(int fd, struct modeset_output *out)
 {
 	modeset_drm_object_fini(&out->connector);
 	modeset_drm_object_fini(&out->crtc);
-	modeset_drm_object_fini(&out->plane_video);
-	modeset_drm_object_fini(&out->plane_osd);
+	modeset_drm_object_fini(&out->video_plane);
+	modeset_drm_object_fini(&out->osd_plane);
 }
 
 
-static int modeset_create_fb(int fd, struct modeset_buf *buf)
+int modeset_create_fb(int fd, struct modeset_buf *buf)
 {
 	struct drm_mode_create_dumb creq;
 	struct drm_mode_destroy_dumb dreq;
@@ -432,7 +378,7 @@ err_destroy:
 }
 
 
-static void modeset_destroy_fb(int fd, struct modeset_buf *buf)
+void modeset_destroy_fb(int fd, struct modeset_buf *buf)
 {
 	struct drm_mode_destroy_dumb dreq;
 
@@ -446,18 +392,18 @@ static void modeset_destroy_fb(int fd, struct modeset_buf *buf)
 }
 
 
-static int modeset_setup_framebuffers(int fd, drmModeConnector *conn,
+int modeset_setup_framebuffers(int fd, drmModeConnector *conn,
 				      struct modeset_output *out)
 {
-	out->bufs[0].width = conn->modes[0].hdisplay;
-	out->bufs[0].height = conn->modes[0].vdisplay;
-	out->bufs[1].width = out->bufs[0].width;
-	out->bufs[1].height = out->bufs[0].height;
-	int ret = modeset_create_fb(fd, &out->bufs[0]);
+	out->osd_bufs[0].width = conn->modes[0].hdisplay;
+	out->osd_bufs[0].height = conn->modes[0].vdisplay;
+	out->osd_bufs[1].width = out->osd_bufs[0].width;
+	out->osd_bufs[1].height = out->osd_bufs[0].height;
+	int ret = modeset_create_fb(fd, &out->osd_bufs[0]);
 	if (ret) {
 		return ret;
 	}
-	ret = modeset_create_fb(fd, &out->bufs[1]);
+	ret = modeset_create_fb(fd, &out->osd_bufs[1]);
 	if (ret) {
 		return ret;
 	}
@@ -469,12 +415,12 @@ static int modeset_setup_framebuffers(int fd, drmModeConnector *conn,
 }
 
 
-static void modeset_output_destroy(int fd, struct modeset_output *out)
+void modeset_output_destroy(int fd, struct modeset_output *out)
 {
 	modeset_destroy_objects(fd, out);
 
-	modeset_destroy_fb(fd, &out->bufs[0]);
-	modeset_destroy_fb(fd, &out->bufs[1]);
+	modeset_destroy_fb(fd, &out->osd_bufs[0]);
+	modeset_destroy_fb(fd, &out->osd_bufs[1]);
 
 	drmModeDestroyPropertyBlob(fd, out->mode_blob_id);
 
@@ -482,7 +428,7 @@ static void modeset_output_destroy(int fd, struct modeset_output *out)
 }
 
 
-static struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn)
+struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn)
 {
 	int ret;
 	struct modeset_output *out;
@@ -510,7 +456,7 @@ static struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drm
 		goto out_error;
 	}
 	fprintf(stderr, "mode for connector %u is %ux%u\n",
-	        conn->connector_id, out->bufs[0].width, out->bufs[0].height);
+	        conn->connector_id, out->osd_bufs[0].width, out->osd_bufs[0].height);
 
 	ret = modeset_find_crtc(fd, res, conn, out);
 	if (ret) {
@@ -518,12 +464,12 @@ static struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drm
 		goto out_blob;
 	}
 
-	ret = modeset_find_plane(fd, out, &out->plane_video, DRM_FORMAT_NV12);
+	ret = modeset_find_plane(fd, out, &out->video_plane, DRM_FORMAT_NV12);
 	if (ret) {
 		fprintf(stderr, "no valid video plane with format NV12 for crtc %u\n", out->crtc.id);
 		goto out_blob;
 	}
-	ret = modeset_find_plane(fd, out, &out->plane_osd, DRM_FORMAT_ARGB8888);
+	ret = modeset_find_plane(fd, out, &out->osd_plane, DRM_FORMAT_ARGB8888);
 	if (ret) {
 		fprintf(stderr, "no valid osd plane with format ARGB8888 for crtc %u\n", out->crtc.id);
 		goto out_blob;
@@ -560,7 +506,7 @@ out_error:
 }
 
 
-static int modeset_prepare(int fd, struct modeset_output *output_list)
+int modeset_prepare(int fd, struct modeset_output *output_list)
 {
 	drmModeRes *res;
 	drmModeConnector *conn;
@@ -599,7 +545,7 @@ static int modeset_prepare(int fd, struct modeset_output *output_list)
 }
 
 
-static int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, 
+int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, 
 	int fb_id, int width, int height, int zpos)
 {
 	if (set_drm_object_property(req, &out->connector, "CRTC_ID", out->crtc.id) < 0)
@@ -640,127 +586,14 @@ static int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drm
 	return 0;
 }
 
-static int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
-{
-	int ret, flags;
-	struct drm_object *plane = &output_list->plane_osd;
-	struct modeset_buf *buf = &output_list->bufs[output_list->buf_switch ^ 1];
-
-	// Get zpos from video plane to make sure it overlays.
-	int64_t zpos = get_property_value(fd, output_list->plane_video.props, "zpos") + 1;
-	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, zpos);
-	if (ret < 0) {
-		fprintf(stderr, "prepare atomic commit failed, %d\n", errno);
-		return ret;
-	}
-
-	/* perform test-only atomic commit */
-	flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
-	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
-	if (ret < 0) {
-		fprintf(stderr, "test-only atomic commit failed for osd plane, %d\n", errno);
-		return ret;
-	}
-
-	/* initial modeset on all outputs */
-	flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
-	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
-	if (ret < 0)
-		fprintf(stderr, "modeset atomic commit failed for osd plane, %d\n", errno);
-
-	return ret;
-}
-
-static void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *out, 
-	int fps, uint64_t latency_avg, uint64_t latency_min, uint64_t latency_max, long long bw_stats[10], int bw_curr, 
-	cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon)
-{
-	struct modeset_buf *buf;
-	unsigned int j,k,off,random;
-	char time_left[5];
-	cairo_t* cr;
-	cairo_surface_t *surface;
-	buf = &out->bufs[out->buf_switch ^ 1];
-	for (j = 0; j < buf->height; ++j) {
-	    for (k = 0; k < buf->width; ++k) {
-	        off = buf->stride * j + k * 4;
-	        *(uint32_t*)&buf->map[off] = (0 << 24) | (0 << 16) | (0 << 8) | 0;
-	    }
-	}
-
-	surface = cairo_image_surface_create_for_data (buf->map, CAIRO_FORMAT_ARGB32, buf->width, buf->height,buf->stride);
-	cr = cairo_create (surface);
-	cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-	cairo_set_font_size (cr,20);
-
-	cairo_set_source_rgba(cr, 0, 0, 0, 0.3); // R, G, B, A
-	cairo_rectangle(cr, 1600, 0, 400, 150); 
-	cairo_fill(cr);
-
-	cairo_set_source_surface (cr, fps_icon, 1630, 17);
-	cairo_paint (cr);
-	cairo_set_source_surface (cr, lat_icon, 1630, 44);
-	cairo_paint (cr);
-	cairo_set_source_surface (cr, net_icon, 1630, 71);
-	cairo_paint (cr);
-
-	cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
-	cairo_move_to (cr,1660,35);
-	char str[80];
-	sprintf(str, "%d fps", fps);
-	cairo_show_text (cr, str);
-	
-	
-	cairo_move_to (cr,1660,62);
-	sprintf(str, "%.2f ms (%.2f, %.2f)", latency_avg/1000.0, latency_min/1000.0, latency_max/1000.0);
-	cairo_show_text (cr, str);
-	
-
-	int gx = 1670;
-	double avg_bw = 0;
-	int avg_cnt = 0;
-	int pw = 20;
-	for (int i = bw_curr; i<(bw_curr+10); ++i) {
-		int h = bw_stats[i%10]/10000 * 1.2;
-		if (h<0) {
-			h = 0;
-		}
-		gx+=pw;
-		if (bw_stats[i%10]>0) {
-			avg_bw += bw_stats[i%10];
-			avg_cnt++;
-		}
-	}
-	avg_bw = avg_bw / avg_cnt / 100;
-	if (avg_bw < 1000) {
-		sprintf(str, "%.2f KB/s", avg_bw );
-	} else {
-		sprintf(str, "%.2f MB/s", avg_bw / 1000 );
-	}
-	cairo_move_to (cr, 1660,89);
-	cairo_show_text (cr, str);
-
-	// Commit fb change.
-	int ret;
-	drmModeAtomicReq *req = out->osd_request;
-	drmModeAtomicSetCursor(req, 0);
-	int fb = out->bufs[out->buf_switch ^ 1].fb;
-  	ret = set_drm_object_property(req, plane, "FB_ID", fb);
-	assert(ret>0);
-	ret = drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_NONBLOCK, NULL);
-
-	// Switch buffer at each draw call
-	out->buf_switch ^= 1;
-}
-
-static void restore_osd_plane_zpos(int fd, struct modeset_output *output_list) {
+void restore_osd_plane_zpos(int fd, struct modeset_output *output_list) {
 	// restore osd zpos
 	int ret, flags;
-	struct drm_object *plane = &output_list->plane_osd;
-	struct modeset_buf *buf = &output_list->bufs[output_list->buf_switch ^ 1];
+	struct drm_object *plane = &output_list->osd_plane;
+	struct modeset_buf *buf = &output_list->osd_bufs[output_list->osd_buf_switch ^ 1];
 
 	// TODO(geehe) Find a more elegant way to do this.
-	int64_t zpos = get_property_value(fd, output_list->plane_osd.props, "zpos");
+	int64_t zpos = get_property_value(fd, output_list->osd_plane.props, "zpos");
 	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, zpos);
 	if (ret < 0) {
 		fprintf(stderr, "prepare atomic commit failed, %d\n", errno);
@@ -771,7 +604,7 @@ static void restore_osd_plane_zpos(int fd, struct modeset_output *output_list) {
 		fprintf(stderr, "modeset atomic commit failed, %d\n", errno);
 }
 
-static void modeset_cleanup(int fd, struct modeset_output *output_list)
+void modeset_cleanup(int fd, struct modeset_output *output_list)
 {
 	restore_osd_plane_zpos(fd,output_list);
 	modeset_output_destroy(fd, output_list);

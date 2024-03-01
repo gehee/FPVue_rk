@@ -29,7 +29,8 @@
 #include <linux/videodev2.h>
 #include <rk_mpi.h>
 
-#include "drm.c"
+#include "drm.h"
+#include "osd.h"
 #include "rtp_frame.h"
 
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
@@ -195,7 +196,7 @@ void *frame_thread(void *param)
 				ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_INFO_CHANGE_READY, NULL);
 
 				drmModeAtomicSetCursor(output_list->video_request, 0);
-				ret = modeset_atomic_prepare_commit(drm_fd, output_list, output_list->video_request, &output_list->plane_video, 
+				ret = modeset_atomic_prepare_commit(drm_fd, output_list, output_list->video_request, &output_list->video_plane, 
 					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, -1 /*zpos*/);
 				assert(ret >= 0);
 				ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
@@ -251,7 +252,7 @@ void *display_thread(void *param)
 	int ret;	
 	int frame_counter = 0;
 	uint64_t latency_avg[200];
-	uint64_t min_latency = 1844674407370955161;
+	uint64_t min_latency = 1844674407370955161; // almost MAX_uint64_t
 	uint64_t max_latency = 0;
     struct timespec fps_start, fps_end;
 	clock_gettime(CLOCK_MONOTONIC, &fps_start);
@@ -283,7 +284,7 @@ void *display_thread(void *param)
 		if (param==NULL) {
 			// show DRM FB in plane
 			drmModeAtomicSetCursor(output_list->video_request, 0);
-			ret = set_drm_object_property(output_list->video_request, &output_list->plane_video, "FB_ID", fb_id);
+			ret = set_drm_object_property(output_list->video_request, &output_list->video_plane, "FB_ID", fb_id);
 			assert(ret>0);
 			ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
 			frame_counter++;
@@ -370,7 +371,7 @@ void *osd_thread(void *param) {
 
 	modeset_perform_modeset_osd(drm_fd, output_list);
 	do {
-		modeset_draw_osd(drm_fd, &output_list->plane_osd, output_list, 
+		modeset_draw_osd(drm_fd, &output_list->osd_plane, output_list, 
 			osd_stats.current_framerate, osd_stats.current_latency, osd_stats.min_latency, osd_stats.max_latency, bw_stats, bw_curr, 
 			fps_icon, lat_icon, net_icon);
 		usleep(1000000);
