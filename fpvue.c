@@ -37,6 +37,8 @@
 
 #define PATH_MAX	4096
 
+#define CODEC_ALIGN(x, a)   (((x)+(a)-1)&~((a)-1))
+
 struct {
 	MppCtx		  ctx;
 	MppApi		  *mpi;
@@ -111,8 +113,8 @@ void *frame_thread(void *param)
 				// new resolution
 				assert(!mpi.frm_grp);
 
-				output_list->video_frm_width = mpp_frame_get_width(frame);
-				output_list->video_frm_height = mpp_frame_get_height(frame);
+				output_list->video_frm_width = CODEC_ALIGN(mpp_frame_get_width(frame),16);
+				output_list->video_frm_height = CODEC_ALIGN(mpp_frame_get_height(frame),16);
 				RK_U32 hor_stride = mpp_frame_get_hor_stride(frame);
 				RK_U32 ver_stride = mpp_frame_get_ver_stride(frame);
 				MppFrameFormat fmt = mpp_frame_get_fmt(frame);
@@ -177,8 +179,8 @@ void *frame_thread(void *param)
 					offsets[0] = 0;
 					pitches[0] = hor_stride;						
 					handles[1] = mpi.frame_to_drm[i].handle;
-					offsets[1] = hor_stride * ver_stride;
-					pitches[1] = hor_stride;
+					offsets[1] = pitches[0] * ver_stride;
+					pitches[1] = pitches[0];
 					ret = drmModeAddFB2(drm_fd, output_list->video_frm_width, output_list->video_frm_height, DRM_FORMAT_NV12, handles, pitches, offsets, &mpi.frame_to_drm[i].fb_id, 0);
 					assert(!ret);
 				}
@@ -288,6 +290,8 @@ void *display_thread(void *param)
 			
 			struct timespec rtime = frame_stats[output_list->video_poc];
 		    current_latency = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
+		
+			// printf("current_latency=%.2f ms, current_framerate=%d\n", current_latency/1000.0, current_framerate);
 		}
 	}
 end:	

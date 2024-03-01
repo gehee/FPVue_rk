@@ -628,9 +628,9 @@ static int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drm
 		return -1;
 	if (set_drm_object_property(req, plane, "CRTC_Y", 0) < 0)
 		return -1;
-	if (set_drm_object_property(req, plane, "CRTC_W", width) < 0)
+	if (set_drm_object_property(req, plane, "CRTC_W", out->video_crtc_width) < 0)
 		return -1;
-	if (set_drm_object_property(req, plane, "CRTC_H", height) < 0)
+	if (set_drm_object_property(req, plane, "CRTC_H", out->video_crtc_height) < 0)
 		return -1;
 	if (zpos > -1) {
 		if (set_drm_object_property(req, plane, "zpos", zpos) < 0)

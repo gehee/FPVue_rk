@@ -37,5 +37,5 @@ make
 ### Known issues
 
 1. OSD is flickering
-2. Properly support full screen and scaling video
-3. No image when running without OSD
+2. Running with OSD enabled does not restore zpos properly, causing black screen on next run without osd.
+3. OSD does not scale to the full screen.
