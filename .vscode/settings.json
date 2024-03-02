@@ -1,5 +1,6 @@
 {
     "files.associations": {
-        "inet.h": "c"
+        "typeinfo": "c",
+        "osd.h": "c"
     }
 }

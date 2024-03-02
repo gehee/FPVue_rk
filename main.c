@@ -197,7 +197,7 @@ void *frame_thread(void *param)
 
 				drmModeAtomicSetCursor(output_list->video_request, 0);
 				ret = modeset_atomic_prepare_commit(drm_fd, output_list, output_list->video_request, &output_list->video_plane, 
-					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, -1 /*zpos*/);
+					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, 1 /*zpos*/);
 				assert(ret >= 0);
 				ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
 				assert(!ret);
@@ -306,6 +306,8 @@ void *display_thread(void *param)
 				osd_stats.max_latency = max_latency;
 				osd_stats.min_latency = min_latency;
 				osd_stats.current_framerate = frame_counter;
+
+				//printf("decoding decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_stats.current_latency/1000.0, osd_stats.max_latency/1000.0, osd_stats.min_latency/1000.0, osd_stats.current_framerate);
 				
 				fps_start = fps_end;
 				frame_counter = 0;
@@ -315,7 +317,7 @@ void *display_thread(void *param)
 			
 			struct timespec rtime = frame_stats[output_list->video_poc];
 		    latency_avg[frame_counter] = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
-			// printf("decoding current_latency=%.2f ms\n",  latency_avg[frame_counter]/1000.0);
+			//printf("decoding current_latency=%.2f ms\n",  latency_avg[frame_counter]/1000.0);
 		}
 	}
 end:	

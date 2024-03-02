@@ -10,11 +10,9 @@ int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
 	struct drm_object *plane = &output_list->osd_plane;
 	struct modeset_buf *buf = &output_list->osd_bufs[output_list->osd_buf_switch ^ 1];
 
-	// Get zpos from video plane to make sure it overlays.
-	int64_t zpos = get_property_value(fd, output_list->video_plane.props, "zpos") + 1;
-	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, zpos);
+	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, 2 /* zpos*/);
 	if (ret < 0) {
-		fprintf(stderr, "prepare atomic commit failed, %d\n", errno);
+		fprintf(stderr, "prepare atomic commit failed for osd plane %d: %m\n", plane->id);
 		return ret;
 	}
 
@@ -22,7 +20,7 @@ int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
 	flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
 	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
 	if (ret < 0) {
-		fprintf(stderr, "test-only atomic commit failed for osd plane, %d\n", errno);
+		fprintf(stderr, "test-only atomic commit failed for osd plane %d: %m\n", plane->id);
 		return ret;
 	}
 
@@ -30,7 +28,7 @@ int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
 	flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
 	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
 	if (ret < 0)
-		fprintf(stderr, "modeset atomic commit failed for osd plane, %d\n", errno);
+		fprintf(stderr, "modeset atomic commit failed for osd plane %d: %m\n", plane->id);
 
 	return ret;
 }
@@ -52,44 +50,44 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	    }
 	}
 
+	int osd_x = buf->width - 320;
+
 	surface = cairo_image_surface_create_for_data (buf->map, CAIRO_FORMAT_ARGB32, buf->width, buf->height,buf->stride);
 	cr = cairo_create (surface);
 	cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
 	cairo_set_font_size (cr,20);
 
 	cairo_set_source_rgba(cr, 0, 0, 0, 0.3); // R, G, B, A
-	cairo_rectangle(cr, 1600, 0, 400, 150); 
+	cairo_rectangle(cr, osd_x, 0, 400, 115); 
 	cairo_fill(cr);
 
-	cairo_set_source_surface (cr, fps_icon, 1630, 17);
+
+	cairo_set_source_surface (cr, fps_icon, osd_x+30, 17);
 	cairo_paint (cr);
-	cairo_set_source_surface (cr, lat_icon, 1630, 44);
+	cairo_set_source_surface (cr, lat_icon, osd_x+30, 44);
 	cairo_paint (cr);
-	cairo_set_source_surface (cr, net_icon, 1630, 71);
+	cairo_set_source_surface (cr, net_icon, osd_x+30, 71);
 	cairo_paint (cr);
 
 	cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
-	cairo_move_to (cr,1660,35);
+	cairo_move_to (cr,osd_x+60,35);
 	char str[80];
 	sprintf(str, "%d fps", fps);
 	cairo_show_text (cr, str);
 	
 	
-	cairo_move_to (cr,1660,62);
+	cairo_move_to (cr,osd_x+60,62);
 	sprintf(str, "%.2f ms (%.2f, %.2f)", latency_avg/1000.0, latency_min/1000.0, latency_max/1000.0);
 	cairo_show_text (cr, str);
 	
 
-	int gx = 1670;
 	double avg_bw = 0;
 	int avg_cnt = 0;
-	int pw = 20;
 	for (int i = bw_curr; i<(bw_curr+10); ++i) {
 		int h = bw_stats[i%10]/10000 * 1.2;
 		if (h<0) {
 			h = 0;
 		}
-		gx+=pw;
 		if (bw_stats[i%10]>0) {
 			avg_bw += bw_stats[i%10];
 			avg_cnt++;
@@ -101,7 +99,7 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	} else {
 		sprintf(str, "%.2f MB/s", avg_bw / 1000 );
 	}
-	cairo_move_to (cr, 1660,89);
+	cairo_move_to (cr, osd_x+60,89);
 	cairo_show_text (cr, str);
 
 	// Commit fb change.

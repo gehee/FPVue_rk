@@ -106,7 +106,7 @@ int modeset_prepare(int fd, struct modeset_output *output_list);
 
 int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, int fb_id, int width, int height, int zpos);
 
-void restore_osd_plane_zpos(int fd, struct modeset_output *output_list);
+void restore_planes_zpos(int fd, struct modeset_output *output_list);
 
 void modeset_cleanup(int fd, struct modeset_output *output_list);
 

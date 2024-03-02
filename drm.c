@@ -550,14 +550,10 @@ int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAto
 {
 	if (set_drm_object_property(req, &out->connector, "CRTC_ID", out->crtc.id) < 0)
 		return -1;
-
-
 	if (set_drm_object_property(req, &out->crtc, "MODE_ID", out->mode_blob_id) < 0)
 		return -1;
-
 	if (set_drm_object_property(req, &out->crtc, "ACTIVE", 1) < 0)
 		return -1;
-
 	if (set_drm_object_property(req, plane, "FB_ID", fb_id) < 0)
 		return -1;
 	if (set_drm_object_property(req, plane, "CRTC_ID", out->crtc.id) < 0)
@@ -578,34 +574,41 @@ int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAto
 		return -1;
 	if (set_drm_object_property(req, plane, "CRTC_H", out->video_crtc_height) < 0)
 		return -1;
-	if (zpos > -1) {
-		if (set_drm_object_property(req, plane, "zpos", zpos) < 0)
-			return -1;
-	}
+	if (set_drm_object_property(req, plane, "zpos", zpos) < 0)
+		return -1;
 
 	return 0;
 }
 
-void restore_osd_plane_zpos(int fd, struct modeset_output *output_list) {
+void restore_planes_zpos(int fd, struct modeset_output *output_list) {
 	// restore osd zpos
 	int ret, flags;
-	struct drm_object *plane = &output_list->osd_plane;
 	struct modeset_buf *buf = &output_list->osd_bufs[output_list->osd_buf_switch ^ 1];
 
 	// TODO(geehe) Find a more elegant way to do this.
 	int64_t zpos = get_property_value(fd, output_list->osd_plane.props, "zpos");
-	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, zpos);
+	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, &output_list->osd_plane, buf->fb, buf->width, buf->height, zpos);
 	if (ret < 0) {
-		fprintf(stderr, "prepare atomic commit failed, %d\n", errno);
+		fprintf(stderr, "prepare atomic commit failed for plane %d, %m\n", output_list->osd_plane.id);
 		return;
 	}
 	ret = drmModeAtomicCommit(fd, output_list->osd_request, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
 	if (ret < 0) 
-		fprintf(stderr, "modeset atomic commit failed, %d\n", errno);
+		fprintf(stderr, "modeset atomic commit failed for plane %d, %m\n", output_list->osd_plane.id);
+
+	zpos = get_property_value(fd, output_list->video_plane.props, "zpos");
+	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->video_request, &output_list->video_plane, buf->fb, buf->width, buf->height, zpos);
+	if (ret < 0) {
+		fprintf(stderr, "prepare atomic commit failed for plane %d, %m\n", output_list->video_plane.id);
+		return;
+	}
+	ret = drmModeAtomicCommit(fd, output_list->video_request, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+	if (ret < 0) 
+		fprintf(stderr, "modeset atomic commit failed for plane %d, %m\n", output_list->video_plane.id);
 }
 
 void modeset_cleanup(int fd, struct modeset_output *output_list)
 {
-	restore_osd_plane_zpos(fd,output_list);
+	restore_planes_zpos(fd,output_list);
 	modeset_output_destroy(fd, output_list);
 }
