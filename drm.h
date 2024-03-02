@@ -22,7 +22,7 @@
 #include <xf86drmMode.h>
 #include <drm_fourcc.h>
 #include <pthread.h>
-#include <rk_mpi.h>
+#include <rockchip/rk_mpi.h>
 #include <assert.h>
 
 struct drm_object {

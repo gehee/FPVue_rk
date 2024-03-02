@@ -27,7 +27,7 @@
 #include <xf86drmMode.h>
 #include <drm_fourcc.h>
 #include <linux/videodev2.h>
-#include <rk_mpi.h>
+#include <rockchip/rk_mpi.h>
 
 #include "drm.h"
 #include "osd.h"

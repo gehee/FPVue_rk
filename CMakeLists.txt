@@ -11,7 +11,7 @@ set(SOURCE_FILES drm.c
 				rtp_frame.c
 				main.c)
 
-include_directories("/usr/include/libdrm" "/usr/local/include/rockchip" "/usr/include/cairo")
+include_directories("/usr/include/libdrm" "/usr/include/cairo")
 
 add_executable(fpvue ${SOURCE_FILES})
 target_link_libraries(fpvue rockchip_mpp pthread drm cairo)
