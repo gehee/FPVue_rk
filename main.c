@@ -31,7 +31,10 @@
 
 #include "drm.h"
 #include "osd.h"
-#include "rtp_frame.h"
+#include "rtp.h"
+
+#include "mavlink/common/mavlink.h"
+#include "mavlink.h"
 
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
 #define MAX_FRAMES 24		// min 16 and 20+ recommended (mpp/readme.txt)
@@ -79,21 +82,6 @@ int frm_eos = 0;
 int drm_fd = 0;
 pthread_mutex_t video_mutex;
 pthread_cond_t video_cond;
-
-// OSD Vars
-struct video_stats {
-	int current_framerate;
-	uint64_t current_latency;
-	uint64_t max_latency;
-	uint64_t min_latency;
-};
-struct video_stats osd_stats;
-int bw_curr = 0;
-long long bw_stats[10];
-
-// Headers
-int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer);
-
 
 // frame_thread
 //
@@ -302,12 +290,12 @@ void *display_thread(void *param)
 						min_latency = latency_avg[i];
 					}
 				}
-				osd_stats.current_latency = sum / (frame_counter);
-				osd_stats.max_latency = max_latency;
-				osd_stats.min_latency = min_latency;
-				osd_stats.current_framerate = frame_counter;
+				osd_vars.latency_avg = sum / (frame_counter);
+				osd_vars.latency_max = max_latency;
+				osd_vars.latency_min = min_latency;
+				osd_vars.current_framerate = frame_counter;
 
-				//printf("decoding decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_stats.current_latency/1000.0, osd_stats.max_latency/1000.0, osd_stats.min_latency/1000.0, osd_stats.current_framerate);
+				//printf("decoding decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, osd_vars.current_framerate);
 				
 				fps_start = fps_end;
 				frame_counter = 0;
@@ -373,12 +361,104 @@ void *osd_thread(void *param) {
 
 	modeset_perform_modeset_osd(drm_fd, output_list);
 	do {
-		modeset_draw_osd(drm_fd, &output_list->osd_plane, output_list, 
-			osd_stats.current_framerate, osd_stats.current_latency, osd_stats.min_latency, osd_stats.max_latency, bw_stats, bw_curr, 
-			fps_icon, lat_icon, net_icon);
+		modeset_draw_osd(drm_fd, &output_list->osd_plane, output_list, fps_icon, lat_icon, net_icon);
 		usleep(1000000);
     } while (!signal_flag);
 	modeset_cleanup(drm_fd, output_list);
+}
+
+
+int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
+	// Create socket
+  	int socketFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	struct sockaddr_in address;
+	memset(&address, 0x00, sizeof(address));
+	address.sin_family = AF_INET;
+	address.sin_port = htons(port);
+	bind(socketFd, (struct sockaddr*)&address, sizeof(struct sockaddr_in));
+
+	if (fcntl(socketFd, F_SETFL, O_NONBLOCK) == -1) {
+		printf("ERROR: Unable to set non-blocking mode\n");
+		return 1;
+	}
+
+	printf("listening on socket 5600\n");
+
+	uint8_t* rx_buffer = malloc(1024 * 1024);
+    
+	int nalStart = 0;
+	int poc = 0;
+	int ret = 0;
+	struct timespec recv_ts;
+	long long bytesReceived = 0; 
+	uint8_t* nal;
+
+	struct timespec bw_start, bw_end;
+	clock_gettime(CLOCK_MONOTONIC, &bw_start);
+	while (!signal_flag) {
+		ssize_t rx = recv(socketFd, rx_buffer+8, 4096, 0);
+		clock_gettime(CLOCK_MONOTONIC, &bw_end);
+		uint64_t time_us=(bw_end.tv_sec - bw_start.tv_sec)*1000000ll + ((bw_end.tv_nsec - bw_start.tv_nsec)/1000ll) % 1000000ll;
+		if (rx > 0) {
+			bytesReceived += rx;
+		}
+		if (time_us >= 1000000) {
+			bw_start = bw_end;
+			osd_vars.bw_curr = (osd_vars.bw_curr + 1) % 10;
+			osd_vars.bw_stats[osd_vars.bw_curr] = bytesReceived;
+			bytesReceived = 0;
+		}
+		if (rx <= 0) {
+			usleep(1);
+			continue;
+		}
+		if (nal) {
+			clock_gettime(CLOCK_MONOTONIC, &recv_ts);
+		}
+		uint32_t rtp_header = 0;
+		if (rx_buffer[8] & 0x80 && rx_buffer[9] & 0x60) {
+			rtp_header = 12;
+		}
+
+		// Decode frame
+		uint32_t nal_size = 0;
+		nal = decode_frame(rx_buffer + 8, rx, rtp_header, nal_buffer, &nal_size);
+		if (!nal) {
+			continue;
+		}
+
+		if (nal_size < 5) {
+			printf("> Broken frame\n");
+			break;
+		}
+
+	
+		uint8_t nal_type_hevc = (nal[4] >> 1) & 0x3F;
+		if (nalStart==0 && nal_type_hevc == 1) { //hevc
+			continue;
+		}
+		nalStart = 1;
+		if (nal_type_hevc == 19) {
+			poc = 0;
+		}
+		frame_stats[poc]=recv_ts;
+
+		mpp_packet_set_pos(packet, nal); // only needed once
+		mpp_packet_set_length(packet, nal_size);
+
+		// send packet until it success
+		while (!signal_flag && MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
+				usleep(10000);
+		}
+		poc ++;
+	};
+	printf("PACKET EOS\n");
+	mpp_packet_set_eos(packet);
+	mpp_packet_set_pos(packet, nal_buffer);
+	mpp_packet_set_length(packet, 0);
+	while (MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
+		usleep(10000);
+	}
 }
 
 // main
@@ -388,6 +468,7 @@ int main(int argc, char **argv)
 	int ret;	
 	int i, j;
 	int enable_osd = 0;
+	int enable_mavlink = 0;
 
 	// Loop through each command-line argument
     for (int i = 1; i < argc; i++) {
@@ -396,10 +477,15 @@ int main(int argc, char **argv)
             // Process the flag
             if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
                 // Display help message
-                printf("Usage: %s [--osd]\n", argv[0]);
+                printf("Usage: %s [--osd] [--mavlink] [--mavlink1]\n", argv[0]);
                 return 0;
             } else if (strcmp(argv[i], "--osd") == 0) {
                 enable_osd = 1;
+            } else if (strcmp(argv[i], "--mavlink") == 0) {
+                enable_mavlink = 1;
+            } else if (strcmp(argv[i], "--mavlink1") == 0) {
+                enable_mavlink = 1;
+				osd_vars.osd_mode = 1;
             } else {
                 // Handle other flags or flag arguments
                 printf("Unknown flag: %s\n", argv[i]);
@@ -470,12 +556,16 @@ int main(int argc, char **argv)
 	ret = pthread_cond_init(&video_cond, NULL);
 	assert(!ret);
 
-	pthread_t tid_frame, tid_display, tid_osd;
+	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink;
 	ret = pthread_create(&tid_frame, NULL, frame_thread, NULL);
 	assert(!ret);
 	ret = pthread_create(&tid_display, NULL, display_thread, argc==4?argv[3]:NULL);
 	assert(!ret);
 	if (enable_osd) {
+		if (enable_mavlink) {
+			ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, 0);
+			assert(!ret);
+		}
 		ret = pthread_create(&tid_osd, NULL, osd_thread, NULL);
 		assert(!ret);
 	}
@@ -545,99 +635,4 @@ int main(int argc, char **argv)
 	close(drm_fd);
 
 	return 0;
-}
-
-
-
-int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
-	// Create socket
-  	int socketFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	struct sockaddr_in address;
-	memset(&address, 0x00, sizeof(address));
-	address.sin_family = AF_INET;
-	address.sin_port = htons(port);
-	bind(socketFd, (struct sockaddr*)&address, sizeof(struct sockaddr_in));
-
-	if (fcntl(socketFd, F_SETFL, O_NONBLOCK) == -1) {
-		printf("ERROR: Unable to set non-blocking mode\n");
-		return 1;
-	}
-
-	printf("listening on socket 5600\n");
-
-	uint8_t* rx_buffer = malloc(1024 * 1024);
-    
-	int nalStart = 0;
-	int poc = 0;
-	int ret = 0;
-	struct timespec recv_ts;
-	long long bytesReceived = 0; 
-	uint8_t* nal;
-
-	struct timespec bw_start, bw_end;
-	clock_gettime(CLOCK_MONOTONIC, &bw_start);
-	while (!signal_flag) {
-		ssize_t rx = recv(socketFd, rx_buffer+8, 4096, 0);
-		clock_gettime(CLOCK_MONOTONIC, &bw_end);
-		uint64_t time_us=(bw_end.tv_sec - bw_start.tv_sec)*1000000ll + ((bw_end.tv_nsec - bw_start.tv_nsec)/1000ll) % 1000000ll;
-		if (rx > 0) {
-			bytesReceived += rx;
-		}
-		if (time_us >= 1000000) {
-			bw_start = bw_end;
-			bw_curr = (bw_curr + 1) % 10;
-			bw_stats[bw_curr] = bytesReceived;
-			bytesReceived = 0;
-		}
-		if (rx <= 0) {
-			usleep(1);
-			continue;
-		}
-		if (nal) {
-			clock_gettime(CLOCK_MONOTONIC, &recv_ts);
-		}
-		uint32_t rtp_header = 0;
-		if (rx_buffer[8] & 0x80 && rx_buffer[9] & 0x60) {
-			rtp_header = 12;
-		}
-
-		// Decode frame
-		uint32_t nal_size = 0;
-		nal = decode_frame(rx_buffer + 8, rx, rtp_header, nal_buffer, &nal_size);
-		if (!nal) {
-			continue;
-		}
-
-		if (nal_size < 5) {
-			printf("> Broken frame\n");
-			break;
-		}
-
-	
-		uint8_t nal_type_hevc = (nal[4] >> 1) & 0x3F;
-		if (nalStart==0 && nal_type_hevc == 1) { //hevc
-			continue;
-		}
-		nalStart = 1;
-		if (nal_type_hevc == 19) {
-			poc = 0;
-		}
-		frame_stats[poc]=recv_ts;
-
-		mpp_packet_set_pos(packet, nal); // only needed once
-		mpp_packet_set_length(packet, nal_size);
-
-		// send packet until it success
-		while (!signal_flag && MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
-				usleep(10000);
-		}
-		poc ++;
-	};
-	printf("PACKET EOS\n");
-	mpp_packet_set_eos(packet);
-	mpp_packet_set_pos(packet, nal_buffer);
-	mpp_packet_set_length(packet, 0);
-	while (MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
-		usleep(10000);
-	}
 }
