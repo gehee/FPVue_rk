@@ -570,9 +570,17 @@ int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAto
 		return -1;
 	if (set_drm_object_property(req, plane, "CRTC_Y", 0) < 0)
 		return -1;
-	if (set_drm_object_property(req, plane, "CRTC_W", out->video_crtc_width) < 0)
+	int crtcw = out->video_crtc_width;
+	if (crtcw < width) {
+		crtcw = width;
+	}
+	if (set_drm_object_property(req, plane, "CRTC_W", crtcw) < 0)
 		return -1;
-	if (set_drm_object_property(req, plane, "CRTC_H", out->video_crtc_height) < 0)
+	int crtch = out->video_crtc_height;
+	if (crtch < height) {
+		crtch = height;
+	}
+	if (set_drm_object_property(req, plane, "CRTC_H", crtch) < 0)
 		return -1;
 	if (set_drm_object_property(req, plane, "zpos", zpos) < 0)
 		return -1;
