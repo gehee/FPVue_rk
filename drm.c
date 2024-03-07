@@ -252,11 +252,6 @@ int modeset_find_plane(int fd, struct modeset_output *out, struct drm_object *pl
 
 	drmModeFreePlaneResources(plane_res);
 
-	if (found_plane) {
-		fprintf(stdout, "found plane for format %s, id=%d\n", drm_fourcc_to_string(plane_format), plane_out->id);
-	} else
-		fprintf(stdout, "couldn't find a plane for format %s\n", drm_fourcc_to_string(plane_format));
-
 	return ret;
 }
 
@@ -455,8 +450,6 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 		fprintf(stderr, "couldn't create a blob property\n");
 		goto out_error;
 	}
-	fprintf(stderr, "mode for connector %u is %ux%u\n",
-	        conn->connector_id, out->osd_bufs[0].width, out->osd_bufs[0].height);
 
 	ret = modeset_find_crtc(fd, res, conn, out);
 	if (ret) {
@@ -469,11 +462,14 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 		fprintf(stderr, "no valid video plane with format NV12 for crtc %u\n", out->crtc.id);
 		goto out_blob;
 	}
+	fprintf(stdout, "Using plane %d (NV12) for Video\n",  out->video_plane.id);
+
 	ret = modeset_find_plane(fd, out, &out->osd_plane, DRM_FORMAT_ARGB8888);
 	if (ret) {
 		fprintf(stderr, "no valid osd plane with format ARGB8888 for crtc %u\n", out->crtc.id);
 		goto out_blob;
 	}
+	fprintf(stdout, "Using plane %d (NV12) for OSD\n",  out->osd_plane.id);
 
 	ret = modeset_setup_objects(fd, out);
 	if (ret) {
@@ -492,7 +488,6 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 	assert(out->video_request);
 	out->osd_request = drmModeAtomicAlloc();
 	assert(out->video_request);
-
 
 	return out;
 

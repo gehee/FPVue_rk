@@ -29,9 +29,12 @@
 #include <linux/videodev2.h>
 #include <rockchip/rk_mpi.h>
 
+#include "main.h"
 #include "drm.h"
 #include "osd.h"
 #include "rtp_frame.h"
+
+
 
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
 #define MAX_FRAMES 24		// min 16 and 20+ recommended (mpp/readme.txt)
@@ -56,24 +59,6 @@ struct {
 
 struct timespec frame_stats[1000];
 
-enum supported_eotf_type {
-	TRADITIONAL_GAMMA_SDR = 0,
-	TRADITIONAL_GAMMA_HDR,
-	SMPTE_ST2084,
-	HLG,
-	FUTURE_EOTF
-};
-
-enum drm_hdmi_output_type {
-	DRM_HDMI_OUTPUT_DEFAULT_RGB,
-	DRM_HDMI_OUTPUT_YCBCR444,
-	DRM_HDMI_OUTPUT_YCBCR422,
-	DRM_HDMI_OUTPUT_YCBCR420,
-	DRM_HDMI_OUTPUT_YCBCR_HQ,
-	DRM_HDMI_OUTPUT_YCBCR_LQ,
-	DRM_HDMI_OUTPUT_INVALID,
-};
-
 struct modeset_output *output_list;
 int frm_eos = 0;
 int drm_fd = 0;
@@ -91,16 +76,13 @@ struct video_stats osd_stats;
 int bw_curr = 0;
 long long bw_stats[10];
 
-// Headers
-int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer);
 
-
-// frame_thread
+// __FRAME_THREAD__
 //
 // - allocate DRM buffers and DRM FB based on frame size
 // - pick frame in blocking mode and output to screen overlay
 
-void *frame_thread(void *param)
+void *__FRAME_THREAD__(void *param)
 {
 	int ret;
 	int i;	
@@ -126,7 +108,7 @@ void *frame_thread(void *param)
 				MppFrameFormat fmt = mpp_frame_get_fmt(frame);
 				assert((fmt == MPP_FMT_YUV420SP) || (fmt == MPP_FMT_YUV420SP_10BIT));
 
-				printf("frame info changed %d(%d)x%d(%d)\n", output_list->video_frm_width, hor_stride, output_list->video_frm_height, ver_stride);
+				printf("Frame info changed %d(%d)x%d(%d)\n", output_list->video_frm_width, hor_stride, output_list->video_frm_height, ver_stride);
 			
 				output_list->video_fb_x = 0;
 				output_list->video_fb_y = 0;
@@ -234,7 +216,7 @@ void *frame_thread(void *param)
 					ret = pthread_mutex_unlock(&video_mutex);
 					assert(!ret);
 					
-				} else printf("FRAME no buff\n");
+				}
 			}
 			
 			frm_eos = mpp_frame_get_eos(frame);
@@ -242,12 +224,11 @@ void *frame_thread(void *param)
 			frame = NULL;
 		} else assert(0);
 	}
-	return NULL;
+	printf("Frame thread done.\n");
 }
 
-// display_thread
 
-void *display_thread(void *param)
+void *__DISPLAY_THREAD__(void *param)
 {
 	int ret;	
 	int frame_counter = 0;
@@ -275,7 +256,7 @@ void *display_thread(void *param)
 		clock_gettime(CLOCK_MONOTONIC, &ats);
 		fb_id = output_list->video_fb_id;
 		if (output_list->video_skipped_frames) 
-			printf("DISPLAY skipped %d\n", output_list->video_skipped_frames);
+			printf("Display skipped %d frame.\n", output_list->video_skipped_frames);
 		output_list->video_fb_id=0;
 		output_list->video_skipped_frames=0;
 		ret = pthread_mutex_unlock(&video_mutex);
@@ -334,7 +315,7 @@ void sig_handler(int signum)
 	signal_flag++;
 }
 
-// osd_thread
+// __OSD_THREAD__
 
 char * sc_file_get_executable_dir(void) {
 	// <https://stackoverflow.com/a/1024937/1987178>
@@ -356,7 +337,7 @@ char * sc_file_get_executable_dir(void) {
     return strdup(buf);
 }
 
-void *osd_thread(void *param) {
+void *__OSD_THREAD__(void *param) {
 	// Load icons from local folder.
 	// TODO(geehe) embed into source file.
 	char * icon_dir = sc_file_get_executable_dir();
@@ -372,184 +353,20 @@ void *osd_thread(void *param) {
 	cairo_surface_t* net_icon = cairo_image_surface_create_from_png(icon_path);
 
 	modeset_perform_modeset_osd(drm_fd, output_list);
-	do {
+	while (!signal_flag) {
 		modeset_draw_osd(drm_fd, &output_list->osd_plane, output_list, 
 			osd_stats.current_framerate, osd_stats.current_latency, osd_stats.min_latency, osd_stats.max_latency, bw_stats, bw_curr, 
 			fps_icon, lat_icon, net_icon);
 		usleep(1000000);
-    } while (!signal_flag);
+    };
 	modeset_cleanup(drm_fd, output_list);
-}
-
-// main
-
-int main(int argc, char **argv)
-{
-	int ret;	
-	int i, j;
-	int enable_osd = 0;
-
-	// Loop through each command-line argument
-    for (int i = 1; i < argc; i++) {
-        // Check if the argument is a flag
-        if (argv[i][0] == '-') {
-            // Process the flag
-            if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-                // Display help message
-                printf("Usage: %s [--osd]\n", argv[0]);
-                return 0;
-            } else if (strcmp(argv[i], "--osd") == 0) {
-                enable_osd = 1;
-            } else {
-                // Handle other flags or flag arguments
-                printf("Unknown flag: %s\n", argv[i]);
-                return 1; // Return an error code
-            }
-        } else {
-            printf("Unknown flag: %s\n", argv[i]);
-            return 1; // Return an error code
-        }
-    }
-		
-	MppCodingType mpp_type = MPP_VIDEO_CodingHEVC; //(MppCodingType)atoi(argv[1]);
-	ret = mpp_check_support_format(MPP_CTX_DEC, mpp_type);
-	assert(!ret);
-
-	////////////////////////////////// SIGNAL SETUP
-
-	signal(SIGINT, sig_handler);
-	signal(SIGPIPE, sig_handler);
-	
-	//////////////////////////////////  DRM SETUP
-	ret = modeset_open(&drm_fd, "/dev/dri/card0");
-	if (ret < 0) {
-		printf("modeset_open() =  %d\n", ret);
-	}
-	assert(drm_fd >= 0);
-
-	output_list = (struct modeset_output *)malloc(sizeof(struct modeset_output));
-
-	output_list->video_request = drmModeAtomicAlloc();
-	assert(output_list->video_request);
- 	// SETUP DRM
-	ret = modeset_prepare(drm_fd, output_list);
-	assert(!ret);
-	
-	////////////////////////////////////////////// MPI SETUP
-	MppPacket packet;
-
-	uint8_t* nal_buffer = malloc(1024 * 1024);
-	assert(nal_buffer);
-	ret = mpp_packet_init(&packet, nal_buffer, READ_BUF_SIZE);
-	assert(!ret);
-
-	ret = mpp_create(&mpi.ctx, &mpi.mpi);
-	assert(!ret);
-
-	// decoder split mode (multi-data-input) need to be set before init
-	int param = 1;
-	// ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_PARSER_SPLIT_MODE, &param);
-	// assert(!ret);
-
-	// mpp_env_set_u32("mpi_debug", 0x1);
-	// mpp_env_set_u32("mpp_buffer_debug", 0xf);
-	// mpp_env_set_u32("h265d_debug", 0xfff);
-
-	ret = mpp_init(mpi.ctx, MPP_CTX_DEC, mpp_type);
-	assert(!ret);
-
-	// blocked/wait read of frame in thread
-	param = MPP_POLL_BLOCK;
-	ret = mpi.mpi->control(mpi.ctx, MPP_SET_OUTPUT_BLOCK, &param);
-	assert(!ret);
-
- 	//////////////////// THREADS SETUP
-	
-	ret = pthread_mutex_init(&video_mutex, NULL);
-	assert(!ret);
-	ret = pthread_cond_init(&video_cond, NULL);
-	assert(!ret);
-
-	pthread_t tid_frame, tid_display, tid_osd;
-	ret = pthread_create(&tid_frame, NULL, frame_thread, NULL);
-	assert(!ret);
-	ret = pthread_create(&tid_display, NULL, display_thread, argc==4?argv[3]:NULL);
-	assert(!ret);
-	if (enable_osd) {
-		ret = pthread_create(&tid_osd, NULL, osd_thread, NULL);
-		assert(!ret);
-	}
-
-	////////////////////////////////////////////// MAIN LOOP
-	
-	read_rtp_stream(5600, packet, nal_buffer);
-
-	////////////////////////////////////////////// MPI CLEANUP
-
-	ret = pthread_join(tid_frame, NULL);
-	assert(!ret);
-	
-	ret = pthread_mutex_lock(&video_mutex);
-	assert(!ret);	
-	ret = pthread_cond_signal(&video_cond);
-	assert(!ret);	
-	ret = pthread_mutex_unlock(&video_mutex);
-	assert(!ret);	
-
-	ret = pthread_join(tid_display, NULL);
-	assert(!ret);	
-	
-	ret = pthread_cond_destroy(&video_cond);
-	assert(!ret);
-	ret = pthread_mutex_destroy(&video_mutex);
-	assert(!ret);
-
-	ret = mpi.mpi->reset(mpi.ctx);
-	assert(!ret);
-
-	if (mpi.frm_grp) {
-		ret = mpp_buffer_group_put(mpi.frm_grp);
-		assert(!ret);
-		mpi.frm_grp = NULL;
-		for (i=0; i<MAX_FRAMES; i++) {
-			ret = drmModeRmFB(drm_fd, mpi.frame_to_drm[i].fb_id);
-			assert(!ret);
-			struct drm_mode_destroy_dumb dmdd;
-			memset(&dmdd, 0, sizeof(dmdd));
-			dmdd.handle = mpi.frame_to_drm[i].handle;
-			do {
-				ret = ioctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &dmdd);
-			} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
-			assert(!ret);
-		}
-	}
-		
-	mpp_packet_deinit(&packet);
-	mpp_destroy(mpi.ctx);
-	free(nal_buffer);
-	
-	////////////////////////////////////////////// DRM CLEANUP
-	drmModeSetCrtc(drm_fd,
-			       output_list->saved_crtc->crtc_id,
-			       output_list->saved_crtc->buffer_id,
-			       output_list->saved_crtc->x,
-			       output_list->saved_crtc->y,
-			       &output_list->connector.id,
-			       1,
-			       &output_list->saved_crtc->mode);
-	drmModeFreeCrtc(output_list->saved_crtc);
-
-	modeset_cleanup(drm_fd, output_list);
-	drmModeAtomicFree(output_list->video_request);
-	drmModeAtomicFree(output_list->osd_request);
-	close(drm_fd);
-
-	return 0;
+	// TODO(gehee) This code is never reached.
+	printf("OSD thread done.\n");
 }
 
 
 
-int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
+int read_rtp_stream(uint16_t port, MppPacket *packet, uint8_t* nal_buffer) {
 	// Create socket
   	int socketFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	struct sockaddr_in address;
@@ -563,7 +380,7 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 		return 1;
 	}
 
-	printf("listening on socket 5600\n");
+	printf("Listening on socket %d for video\n", port);
 
 	uint8_t* rx_buffer = malloc(1024 * 1024);
     
@@ -633,11 +450,175 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 		}
 		poc ++;
 	};
-	printf("PACKET EOS\n");
 	mpp_packet_set_eos(packet);
 	mpp_packet_set_pos(packet, nal_buffer);
 	mpp_packet_set_length(packet, 0);
 	while (MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
 		usleep(10000);
 	}
+}
+
+void printHelp() {
+  printf(
+    "\n\t\tFPVue FPV Decoder for Rockchip (%s)\n"
+    "\n"
+    "  Usage:\n"
+    "    fpvue [Arguments]\n"
+    "\n"
+    "  Arguments:\n"
+    "    -p [Port]      - Listen port                       (Default: 5600)\n"
+    "\n"
+    "    --osd                  - Enable OSD\n"
+    "\n", __DATE__
+  );
+}
+
+
+
+int main(int argc, char **argv)
+{
+	int ret;	
+	int i, j;
+	int enable_osd = 0;
+	uint16_t listen_port = 5600;
+
+	// Load console arguments
+	__BeginParseConsoleArguments__(printHelp) 
+	
+	__OnArgument("-p") {
+		listen_port = atoi(__ArgValue);
+		continue;
+	}
+
+	__OnArgument("--osd") {
+		enable_osd = 1;
+		continue;
+	}
+
+	__EndParseConsoleArguments__
+		
+	MppCodingType mpp_type = MPP_VIDEO_CodingHEVC; //(MppCodingType)atoi(argv[1]);
+	ret = mpp_check_support_format(MPP_CTX_DEC, mpp_type);
+	assert(!ret);
+
+	////////////////////////////////// SIGNAL SETUP
+
+	signal(SIGINT, sig_handler);
+	signal(SIGPIPE, sig_handler);
+	
+	//////////////////////////////////  DRM SETUP
+	ret = modeset_open(&drm_fd, "/dev/dri/card0");
+	if (ret < 0) {
+		printf("modeset_open() =  %d\n", ret);
+	}
+	assert(drm_fd >= 0);
+
+	output_list = (struct modeset_output *)malloc(sizeof(struct modeset_output));
+
+	output_list->video_request = drmModeAtomicAlloc();
+	assert(output_list->video_request);
+	ret = modeset_prepare(drm_fd, output_list);
+	assert(!ret);
+	
+	////////////////////////////////// MPI SETUP
+	MppPacket packet;
+
+	uint8_t* nal_buffer = malloc(1024 * 1024);
+	assert(nal_buffer);
+	ret = mpp_packet_init(&packet, nal_buffer, READ_BUF_SIZE);
+	assert(!ret);
+
+	ret = mpp_create(&mpi.ctx, &mpi.mpi);
+	assert(!ret);
+
+	ret = mpp_init(mpi.ctx, MPP_CTX_DEC, mpp_type);
+	assert(!ret);
+
+	// blocked/wait read of frame in thread
+	int param = MPP_POLL_BLOCK;
+	ret = mpi.mpi->control(mpi.ctx, MPP_SET_OUTPUT_BLOCK, &param);
+	assert(!ret);
+
+ 	//////////////////// THREADS SETUP
+	
+	ret = pthread_mutex_init(&video_mutex, NULL);
+	assert(!ret);
+	ret = pthread_cond_init(&video_cond, NULL);
+	assert(!ret);
+
+	pthread_t tid_frame, tid_display, tid_osd;
+	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
+	assert(!ret);
+	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, argc==4?argv[3]:NULL);
+	assert(!ret);
+	if (enable_osd) {
+		ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, NULL);
+		assert(!ret);
+	}
+
+	////////////////////////////////////////////// MAIN LOOP
+	
+	read_rtp_stream(listen_port, packet, nal_buffer);
+
+	////////////////////////////////////////////// MPI CLEANUP
+
+	ret = pthread_join(tid_frame, NULL);
+	assert(!ret);
+	
+	ret = pthread_mutex_lock(&video_mutex);
+	assert(!ret);	
+	ret = pthread_cond_signal(&video_cond);
+	assert(!ret);	
+	ret = pthread_mutex_unlock(&video_mutex);
+	assert(!ret);	
+
+	ret = pthread_join(tid_display, NULL);
+	assert(!ret);	
+	
+	ret = pthread_cond_destroy(&video_cond);
+	assert(!ret);
+	ret = pthread_mutex_destroy(&video_mutex);
+	assert(!ret);
+
+	ret = mpi.mpi->reset(mpi.ctx);
+	assert(!ret);
+
+	if (mpi.frm_grp) {
+		ret = mpp_buffer_group_put(mpi.frm_grp);
+		assert(!ret);
+		mpi.frm_grp = NULL;
+		for (i=0; i<MAX_FRAMES; i++) {
+			ret = drmModeRmFB(drm_fd, mpi.frame_to_drm[i].fb_id);
+			assert(!ret);
+			struct drm_mode_destroy_dumb dmdd;
+			memset(&dmdd, 0, sizeof(dmdd));
+			dmdd.handle = mpi.frame_to_drm[i].handle;
+			do {
+				ret = ioctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &dmdd);
+			} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+			assert(!ret);
+		}
+	}
+		
+	mpp_packet_deinit(&packet);
+	mpp_destroy(mpi.ctx);
+	free(nal_buffer);
+	
+	////////////////////////////////////////////// DRM CLEANUP
+	drmModeSetCrtc(drm_fd,
+			       output_list->saved_crtc->crtc_id,
+			       output_list->saved_crtc->buffer_id,
+			       output_list->saved_crtc->x,
+			       output_list->saved_crtc->y,
+			       &output_list->connector.id,
+			       1,
+			       &output_list->saved_crtc->mode);
+	drmModeFreeCrtc(output_list->saved_crtc);
+
+	modeset_cleanup(drm_fd, output_list);
+	drmModeAtomicFree(output_list->video_request);
+	drmModeAtomicFree(output_list->osd_request);
+	close(drm_fd);
+
+	return 0;
 }
