@@ -32,7 +32,10 @@
 #include "main.h"
 #include "drm.h"
 #include "osd.h"
-#include "rtp_frame.h"
+#include "rtp.h"
+
+#include "mavlink/common/mavlink.h"
+#include "mavlink.h"
 
 
 
@@ -114,6 +117,9 @@ void *__FRAME_THREAD__(void *param)
 				output_list->video_fb_y = 0;
 				output_list->video_fb_width = output_list->video_crtc_width;
 				output_list->video_fb_height = output_list->video_crtc_height;		
+
+				osd_vars.video_width = output_list->video_frm_width;
+				osd_vars.video_height = output_list->video_frm_height;
 
 				// create new external frame group and allocate (commit flow) new DRM buffers and DRM FB
 				assert(!mpi.frm_grp);
@@ -283,12 +289,12 @@ void *__DISPLAY_THREAD__(void *param)
 						min_latency = latency_avg[i];
 					}
 				}
-				osd_stats.current_latency = sum / (frame_counter);
-				osd_stats.max_latency = max_latency;
-				osd_stats.min_latency = min_latency;
-				osd_stats.current_framerate = frame_counter;
+				osd_vars.latency_avg = sum / (frame_counter);
+				osd_vars.latency_max = max_latency;
+				osd_vars.latency_min = min_latency;
+				osd_vars.current_framerate = frame_counter;
 
-				//printf("decoding decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_stats.current_latency/1000.0, osd_stats.max_latency/1000.0, osd_stats.min_latency/1000.0, osd_stats.current_framerate);
+				//printf("decoding decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, osd_vars.current_framerate);
 				
 				fps_start = fps_end;
 				frame_counter = 0;
@@ -353,12 +359,10 @@ void *__OSD_THREAD__(void *param) {
 	cairo_surface_t* net_icon = cairo_image_surface_create_from_png(icon_path);
 
 	modeset_perform_modeset_osd(drm_fd, output_list);
-	while (!signal_flag) {
-		modeset_draw_osd(drm_fd, &output_list->osd_plane, output_list, 
-			osd_stats.current_framerate, osd_stats.current_latency, osd_stats.min_latency, osd_stats.max_latency, bw_stats, bw_curr, 
-			fps_icon, lat_icon, net_icon);
+	while(!signal_flag) {
+		modeset_draw_osd(drm_fd, &output_list->osd_plane, output_list, fps_icon, lat_icon, net_icon);
 		usleep(1000000);
-    };
+    }
 	modeset_cleanup(drm_fd, output_list);
 	// TODO(gehee) This code is never reached.
 	printf("OSD thread done.\n");
@@ -366,7 +370,7 @@ void *__OSD_THREAD__(void *param) {
 
 
 
-int read_rtp_stream(uint16_t port, MppPacket *packet, uint8_t* nal_buffer) {
+int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 	// Create socket
   	int socketFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	struct sockaddr_in address;
@@ -380,7 +384,7 @@ int read_rtp_stream(uint16_t port, MppPacket *packet, uint8_t* nal_buffer) {
 		return 1;
 	}
 
-	printf("Listening on socket %d for video\n", port);
+	printf("listening on socket %d\n", port);
 
 	uint8_t* rx_buffer = malloc(1024 * 1024);
     
@@ -402,8 +406,8 @@ int read_rtp_stream(uint16_t port, MppPacket *packet, uint8_t* nal_buffer) {
 		}
 		if (time_us >= 1000000) {
 			bw_start = bw_end;
-			bw_curr = (bw_curr + 1) % 10;
-			bw_stats[bw_curr] = bytesReceived;
+			osd_vars.bw_curr = (osd_vars.bw_curr + 1) % 10;
+			osd_vars.bw_stats[osd_vars.bw_curr] = bytesReceived;
 			bytesReceived = 0;
 		}
 		if (rx <= 0) {
@@ -466,21 +470,23 @@ void printHelp() {
     "    fpvue [Arguments]\n"
     "\n"
     "  Arguments:\n"
-    "    -p [Port]      - Listen port                       (Default: 5600)\n"
+    "    -p [Port]      - Listen port                            (Default: 5600)\n"
     "\n"
-    "    --osd                  - Enable OSD\n"
+    "    --osd          - Enable OSD and specifies its element   (Default: video,wfbng)\n"
     "\n", __DATE__
   );
 }
 
-
+// main
 
 int main(int argc, char **argv)
 {
 	int ret;	
 	int i, j;
 	int enable_osd = 0;
+	int enable_mavlink = 0;
 	uint16_t listen_port = 5600;
+	uint16_t mavlink_port = 14550;
 
 	// Load console arguments
 	__BeginParseConsoleArguments__(printHelp) 
@@ -492,12 +498,37 @@ int main(int argc, char **argv)
 
 	__OnArgument("--osd") {
 		enable_osd = 1;
+		char* elements = __ArgValue;
+		printf("osd __ArgValue=%s\n", elements);
+		if (!strcmp(elements, "")) {
+			printf("no __ArgValue\n");
+			osd_vars.enable_video = 1;
+			osd_vars.enable_wfbng = 1;
+			enable_mavlink = 1;
+		} else {
+			char * element = strtok(elements, ",");
+			while( element != NULL ) {
+				printf("enabling element %s\n", element);
+				if (!strcmp(element, "video")) {
+					osd_vars.enable_video = 1;
+				} else if (!strcmp(element, "wfbng")) {
+					osd_vars.enable_wfbng = 1;
+					enable_mavlink = 1;
+				}
+				element = strtok(NULL, ",");
+			}
+		}
+		continue;
+	}
+
+	__OnArgument("--mavlink-port") {
+		mavlink_port = atoi(__ArgValue);
 		continue;
 	}
 
 	__EndParseConsoleArguments__
 		
-	MppCodingType mpp_type = MPP_VIDEO_CodingHEVC; //(MppCodingType)atoi(argv[1]);
+	MppCodingType mpp_type = MPP_VIDEO_CodingHEVC;
 	ret = mpp_check_support_format(MPP_CTX_DEC, mpp_type);
 	assert(!ret);
 
@@ -546,12 +577,16 @@ int main(int argc, char **argv)
 	ret = pthread_cond_init(&video_cond, NULL);
 	assert(!ret);
 
-	pthread_t tid_frame, tid_display, tid_osd;
+	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink;
 	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 	assert(!ret);
 	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, argc==4?argv[3]:NULL);
 	assert(!ret);
 	if (enable_osd) {
+		if (enable_mavlink) {
+			ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, 0);
+			assert(!ret);
+		}
 		ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, NULL);
 		assert(!ret);
 	}
