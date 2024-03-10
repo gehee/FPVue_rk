@@ -321,6 +321,10 @@ void sig_handler(int signum)
 	osd_thread_signal++;
 }
 
+
+int enable_dvr = 0;
+char * dvr_file;
+
 int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 	// Create socket
   	int socketFd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -345,6 +349,13 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 	struct timespec recv_ts;
 	long long bytesReceived = 0; 
 	uint8_t* nal;
+
+	FILE *out_h265 = NULL;
+	if (enable_dvr) {
+		if ((out_h265 = fopen(dvr_file,"w")) == NULL){
+			printf("ERROR: unable to open %s\n", dvr_file);
+		}
+	}
 
 	struct timespec bw_start, bw_end;
 	clock_gettime(CLOCK_MONOTONIC, &bw_start);
@@ -404,12 +415,20 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 				usleep(10000);
 		}
 		poc ++;
+
+		if (out_h265 != NULL) {
+			fwrite(nal, nal_size, 1, out_h265);
+		}
 	};
 	mpp_packet_set_eos(packet);
 	mpp_packet_set_pos(packet, nal_buffer);
 	mpp_packet_set_length(packet, 0);
 	while (MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
 		usleep(10000);
+	}
+
+	if (out_h265 != NULL) {
+		fclose(out_h265);
 	}
 }
 
@@ -424,6 +443,8 @@ void printHelp() {
     "    -p [Port]      - Listen port                            (Default: 5600)\n"
     "\n"
     "    --osd          - Enable OSD and specifies its element   (Default: video,wfbng)\n"
+    "\n"
+    "    --dvr          - Save the video feed (no osd) to the provided filename\n"
     "\n", __DATE__
   );
 }
@@ -450,16 +471,13 @@ int main(int argc, char **argv)
 	__OnArgument("--osd") {
 		enable_osd = 1;
 		char* elements = __ArgValue;
-		printf("osd __ArgValue=%s\n", elements);
 		if (!strcmp(elements, "")) {
-			printf("no __ArgValue\n");
 			osd_vars.enable_video = 1;
 			osd_vars.enable_wfbng = 1;
 			enable_mavlink = 1;
 		} else {
 			char * element = strtok(elements, ",");
 			while( element != NULL ) {
-				printf("enabling element %s\n", element);
 				if (!strcmp(element, "video")) {
 					osd_vars.enable_video = 1;
 				} else if (!strcmp(element, "wfbng")) {
@@ -474,6 +492,12 @@ int main(int argc, char **argv)
 
 	__OnArgument("--mavlink-port") {
 		mavlink_port = atoi(__ArgValue);
+		continue;
+	}
+
+	__OnArgument("--dvr") {
+		enable_dvr = 1;
+		dvr_file = __ArgValue;
 		continue;
 	}
 
