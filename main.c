@@ -42,8 +42,6 @@
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
 #define MAX_FRAMES 24		// min 16 and 20+ recommended (mpp/readme.txt)
 
-#define PATH_MAX	4096
-
 #define CODEC_ALIGN(x, a)   (((x)+(a)-1)&~((a)-1))
 
 struct {
@@ -319,56 +317,9 @@ void sig_handler(int signum)
 {
 	printf("Received signal %d\n", signum);
 	signal_flag++;
+	mavlink_thread_signal++;
+	osd_thread_signal++;
 }
-
-// __OSD_THREAD__
-
-char * sc_file_get_executable_dir(void) {
-	// <https://stackoverflow.com/a/1024937/1987178>
-    char buf[PATH_MAX + 1]; // +1 for the null byte
-    ssize_t len = readlink("/proc/self/exe", buf, PATH_MAX);
-    if (len == -1) {
-        perror("readlink");
-        return NULL;
-    }
-	int i;
-	int end = len;	
-	for (i = 0; i < len; i++) {
-		if (buf[i] == '/') {
-			end = i;
-		}
-	}
-	
-    buf[end] = '\0';
-    return strdup(buf);
-}
-
-void *__OSD_THREAD__(void *param) {
-	// Load icons from local folder.
-	// TODO(geehe) embed into source file.
-	char * icon_dir = sc_file_get_executable_dir();
-	char * icon_path = (char *) malloc(1 + strlen(icon_dir)+ strlen("/icons/framerate.png") );
-    strcpy(icon_path, icon_dir);
-    strcat(icon_path, "/icons/framerate.png");
-	cairo_surface_t *fps_icon = cairo_image_surface_create_from_png(icon_path);
-    strcpy(icon_path, icon_dir);
-    strcat(icon_path, "/icons/latency.png");
-	cairo_surface_t *lat_icon = cairo_image_surface_create_from_png(icon_path);
-    strcpy(icon_path, icon_dir);
-    strcat(icon_path, "/icons/network.png");
-	cairo_surface_t* net_icon = cairo_image_surface_create_from_png(icon_path);
-
-	modeset_perform_modeset_osd(drm_fd, output_list);
-	while(!signal_flag) {
-		modeset_draw_osd(drm_fd, &output_list->osd_plane, output_list, fps_icon, lat_icon, net_icon);
-		usleep(1000000);
-    }
-	modeset_cleanup(drm_fd, output_list);
-	// TODO(gehee) This code is never reached.
-	printf("OSD thread done.\n");
-}
-
-
 
 int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 	// Create socket
@@ -584,10 +535,13 @@ int main(int argc, char **argv)
 	assert(!ret);
 	if (enable_osd) {
 		if (enable_mavlink) {
-			ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, 0);
+			ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, &signal_flag);
 			assert(!ret);
 		}
-		ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, NULL);
+		osd_thread_params *args = malloc(sizeof *args);
+        args->fd = drm_fd;
+        args->output_list = output_list;
+		ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, args);
 		assert(!ret);
 	}
 
@@ -615,6 +569,15 @@ int main(int argc, char **argv)
 	ret = pthread_mutex_destroy(&video_mutex);
 	assert(!ret);
 
+	if (enable_mavlink) {
+		ret = pthread_join(tid_mavlink, NULL);
+		assert(!ret);
+	}
+	if (enable_osd) {
+		ret = pthread_join(tid_osd, NULL);
+		assert(!ret);
+	}
+
 	ret = mpi.mpi->reset(mpi.ctx);
 	assert(!ret);
 
@@ -640,6 +603,7 @@ int main(int argc, char **argv)
 	free(nal_buffer);
 	
 	////////////////////////////////////////////// DRM CLEANUP
+	restore_planes_zpos(drm_fd, output_list);
 	drmModeSetCrtc(drm_fd,
 			       output_list->saved_crtc->crtc_id,
 			       output_list->saved_crtc->buffer_id,
@@ -649,10 +613,9 @@ int main(int argc, char **argv)
 			       1,
 			       &output_list->saved_crtc->mode);
 	drmModeFreeCrtc(output_list->saved_crtc);
-
-	modeset_cleanup(drm_fd, output_list);
 	drmModeAtomicFree(output_list->video_request);
 	drmModeAtomicFree(output_list->osd_request);
+	modeset_cleanup(drm_fd, output_list);
 	close(drm_fd);
 
 	return 0;

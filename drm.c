@@ -416,9 +416,7 @@ void modeset_output_destroy(int fd, struct modeset_output *out)
 
 	modeset_destroy_fb(fd, &out->osd_bufs[0]);
 	modeset_destroy_fb(fd, &out->osd_bufs[1]);
-
 	drmModeDestroyPropertyBlob(fd, out->mode_blob_id);
-
 	free(out);
 }
 
@@ -612,6 +610,5 @@ void restore_planes_zpos(int fd, struct modeset_output *output_list) {
 
 void modeset_cleanup(int fd, struct modeset_output *output_list)
 {
-	restore_planes_zpos(fd,output_list);
 	modeset_output_destroy(fd, output_list);
 }

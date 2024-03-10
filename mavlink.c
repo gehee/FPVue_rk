@@ -74,6 +74,7 @@ char* insertString(char s1[], const char s2[], size_t pos) {
 }
 
 int mavlink_port = 14550;
+int mavlink_thread_signal = 0;
 
 void* __MAVLINK_THREAD__(void* arg) {
   printf("Starting mavlink thread...\n");
@@ -106,7 +107,7 @@ void* __MAVLINK_THREAD__(void* arg) {
   }
 
   char buffer[2048];
-  while (1) {
+  while (!mavlink_thread_signal) {
     memset(buffer, 0x00, sizeof(buffer));
     int ret = recv(fd, buffer, sizeof(buffer), 0);
     if (ret < 0) {
@@ -286,6 +287,7 @@ void* __MAVLINK_THREAD__(void* arg) {
 
     usleep(1);
   }
-
+  
+	printf("Mavlink thread done.\n");
   return 0;
 }
