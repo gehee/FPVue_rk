@@ -19,7 +19,7 @@ int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
 	struct drm_object *plane = &output_list->osd_plane;
 	struct modeset_buf *buf = &output_list->osd_bufs[output_list->osd_buf_switch ^ 1];
 
-	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, 2 /* zpos*/);
+	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, osd_zpos);
 	if (ret < 0) {
 		fprintf(stderr, "prepare atomic commit failed for osd plane %d: %m\n", plane->id);
 		return ret;

@@ -183,7 +183,7 @@ void *__FRAME_THREAD__(void *param)
 
 				drmModeAtomicSetCursor(output_list->video_request, 0);
 				ret = modeset_atomic_prepare_commit(drm_fd, output_list, output_list->video_request, &output_list->video_plane, 
-					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, 1 /*zpos*/);
+					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos);
 				assert(ret >= 0);
 				ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
 				assert(!ret);
@@ -487,6 +487,24 @@ int main(int argc, char **argv)
 				element = strtok(NULL, ",");
 			}
 		}
+		continue;
+	}
+
+	__OnArgument("--drm-osd-plane") {
+		enable_osd = 1;
+		char* str = __ArgValue;
+		osd_plane_id_override = atoi(strtok(str, ","));
+		osd_zpos = atoi(strtok(NULL, ","));
+		printf("using plane_id %d zpos %d for osd\n", osd_plane_id_override, osd_zpos);
+		continue;
+	}
+
+	__OnArgument("--drm-video-plane") {
+		enable_osd = 1;
+		char* str = __ArgValue;
+		video_plane_id_override = atoi(strtok(str, ","));
+		video_zpos = atoi(strtok(NULL, ","));
+		printf("using plane_id %d zpos %d for video\n", video_plane_id_override, video_zpos);
 		continue;
 	}
 

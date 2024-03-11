@@ -25,6 +25,7 @@
 #include <rockchip/rk_mpi.h>
 #include <assert.h>
 
+
 struct drm_object {
 	drmModeObjectProperties *props;
 	drmModePropertyRes **props_info;
@@ -71,6 +72,10 @@ struct modeset_output {
 	bool cleanup;
 };
 
+extern int osd_plane_id_override;
+extern int osd_zpos;
+extern int video_plane_id_override;
+extern int video_zpos;
 
 int modeset_open(int *out, const char *node);
 

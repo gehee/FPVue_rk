@@ -18,6 +18,11 @@
 #include <rockchip/rk_mpi.h>
 #include <assert.h>
 
+int osd_plane_id_override;
+int osd_zpos;
+int video_plane_id_override;
+int video_zpos;
+
 int modeset_open(int *out, const char *node)
 {
 	int fd, ret;
@@ -455,17 +460,25 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 		goto out_blob;
 	}
 
-	ret = modeset_find_plane(fd, out, &out->video_plane, DRM_FORMAT_NV12);
-	if (ret) {
-		fprintf(stderr, "no valid video plane with format NV12 for crtc %u\n", out->crtc.id);
-		goto out_blob;
+	if (video_plane_id_override > 0) {
+		out->video_plane.id = video_plane_id_override;
+	} else {
+		ret = modeset_find_plane(fd, out, &out->video_plane, DRM_FORMAT_NV12);
+		if (ret) {
+			fprintf(stderr, "no valid video plane with format NV12 for crtc %u\n", out->crtc.id);
+			goto out_blob;
+		}
 	}
 	fprintf(stdout, "Using plane %d (NV12) for Video\n",  out->video_plane.id);
 
-	ret = modeset_find_plane(fd, out, &out->osd_plane, DRM_FORMAT_ARGB8888);
-	if (ret) {
-		fprintf(stderr, "no valid osd plane with format ARGB8888 for crtc %u\n", out->crtc.id);
-		goto out_blob;
+	if (osd_plane_id_override > 0) {
+		out->osd_plane.id = osd_plane_id_override;
+	} else {
+		ret = modeset_find_plane(fd, out, &out->osd_plane, DRM_FORMAT_ARGB8888);
+		if (ret) {
+			fprintf(stderr, "no valid osd plane with format ARGB8888 for crtc %u\n", out->crtc.id);
+			goto out_blob;
+		}
 	}
 	fprintf(stdout, "Using plane %d (NV12) for OSD\n",  out->osd_plane.id);
 
@@ -588,6 +601,7 @@ void restore_planes_zpos(int fd, struct modeset_output *output_list) {
 
 	// TODO(geehe) Find a more elegant way to do this.
 	int64_t zpos = get_property_value(fd, output_list->osd_plane.props, "zpos");
+	printf("restoring zpos %d for osd plane %d\n", zpos, output_list->osd_plane.id);
 	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, &output_list->osd_plane, buf->fb, buf->width, buf->height, zpos);
 	if (ret < 0) {
 		fprintf(stderr, "prepare atomic commit failed for plane %d, %m\n", output_list->osd_plane.id);
@@ -598,6 +612,7 @@ void restore_planes_zpos(int fd, struct modeset_output *output_list) {
 		fprintf(stderr, "modeset atomic commit failed for plane %d, %m\n", output_list->osd_plane.id);
 
 	zpos = get_property_value(fd, output_list->video_plane.props, "zpos");
+	printf("restoring zpos %d for video plane %d\n", zpos, output_list->video_plane.id);
 	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->video_request, &output_list->video_plane, buf->fb, buf->width, buf->height, zpos);
 	if (ret < 0) {
 		fprintf(stderr, "prepare atomic commit failed for plane %d, %m\n", output_list->video_plane.id);
