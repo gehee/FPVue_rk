@@ -4,6 +4,7 @@
 #include "drm.h"
 #include <cairo.h>
 #include "mavlink.h"
+#include "icons/icons.h"
 
 #define BILLION 1000000000L
 #define WFB_LINK_LOST 1
@@ -164,44 +165,41 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	out->osd_buf_switch ^= 1;
 }
 
-char * sc_file_get_executable_dir(void) {
-	// <https://stackoverflow.com/a/1024937/1987178>
-    char buf[PATH_MAX + 1]; // +1 for the null byte
-    ssize_t len = readlink("/proc/self/exe", buf, PATH_MAX);
-    if (len == -1) {
-        perror("readlink");
-        return NULL;
-    }
-	int i;
-	int end = len;	
-	for (i = 0; i < len; i++) {
-		if (buf[i] == '/') {
-			end = i;
-		}
-	}
-	
-    buf[end] = '\0';
-    return strdup(buf);
-}
-
 int osd_thread_signal;
 
-void *__OSD_THREAD__(void *param) {
-	 osd_thread_params *p = param;
-	// Load icons from local folder.
-	// TODO(geehe) embed into source file.
-	char * icon_dir = sc_file_get_executable_dir();
-	char * icon_path = (char *) malloc(1 + strlen(icon_dir)+ strlen("/icons/framerate.png") );
-    strcpy(icon_path, icon_dir);
-    strcat(icon_path, "/icons/framerate.png");
-	cairo_surface_t *fps_icon = cairo_image_surface_create_from_png(icon_path);
-    strcpy(icon_path, icon_dir);
-    strcat(icon_path, "/icons/latency.png");
-	cairo_surface_t *lat_icon = cairo_image_surface_create_from_png(icon_path);
-    strcpy(icon_path, icon_dir);
-    strcat(icon_path, "/icons/network.png");
-	cairo_surface_t* net_icon = cairo_image_surface_create_from_png(icon_path);
+typedef struct png_closure
+{
+	unsigned char * iter;
+	unsigned int bytes_left;
+} png_closure_t;
 
+cairo_status_t on_read_png_stream(png_closure_t * closure, unsigned char * data, unsigned int length)
+{
+	if(length > closure->bytes_left) return CAIRO_STATUS_READ_ERROR;
+	
+	memcpy(data, closure->iter, length);
+	closure->iter += length;
+	closure->bytes_left -= length;
+	return CAIRO_STATUS_SUCCESS;
+}
+
+cairo_surface_t * surface_from_embedded_png(const unsigned char * png, size_t length)
+{
+	int rc = -1;
+	png_closure_t closure[1] = {{
+		.iter = (unsigned char *)png,
+		.bytes_left = length,
+	}};
+	return cairo_image_surface_create_from_png_stream(
+		(cairo_read_func_t)on_read_png_stream,
+		closure);
+}
+
+void *__OSD_THREAD__(void *param) {
+	osd_thread_params *p = param;
+	cairo_surface_t *fps_icon = surface_from_embedded_png(framerate_icon, framerate_icon_length);
+	cairo_surface_t *lat_icon = surface_from_embedded_png(latency_icon, latency_icon_length);
+	cairo_surface_t* net_icon = surface_from_embedded_png(bandwidth_icon, bandwidth_icon_length);
 	modeset_perform_modeset_osd(p->fd, p->output_list);
 	while(!osd_thread_signal) {
 		modeset_draw_osd(p->fd, &p->output_list->osd_plane, p->output_list, fps_icon, lat_icon, net_icon);
