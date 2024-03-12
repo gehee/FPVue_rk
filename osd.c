@@ -13,6 +13,7 @@
 #define PATH_MAX	4096
 
 struct osd_vars osd_vars;
+int osd_zpos = 2;
 
 int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
 {
@@ -20,7 +21,7 @@ int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
 	struct drm_object *plane = &output_list->osd_plane;
 	struct modeset_buf *buf = &output_list->osd_bufs[output_list->osd_buf_switch ^ 1];
 
-	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, 2 /* zpos*/);
+	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, osd_zpos);
 	if (ret < 0) {
 		fprintf(stderr, "prepare atomic commit failed for osd plane %d: %m\n", plane->id);
 		return ret;
@@ -35,7 +36,7 @@ int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
 	}
 
 	/* initial modeset on all outputs */
-	flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
+	flags = DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_ATOMIC_NONBLOCK;
 	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
 	if (ret < 0)
 		fprintf(stderr, "modeset atomic commit failed for osd plane %d: %m\n", plane->id);

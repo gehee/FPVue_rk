@@ -64,6 +64,7 @@ struct osd_vars {
 
 extern struct osd_vars osd_vars;
 extern int osd_thread_signal;
+extern int osd_zpos;
 
 typedef struct {
 	struct modeset_output *output_list;

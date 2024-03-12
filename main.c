@@ -77,6 +77,7 @@ struct video_stats osd_stats;
 int bw_curr = 0;
 long long bw_stats[10];
 
+int video_zpos = 4;
 
 // __FRAME_THREAD__
 //
@@ -183,9 +184,10 @@ void *__FRAME_THREAD__(void *param)
 
 				drmModeAtomicSetCursor(output_list->video_request, 0);
 				ret = modeset_atomic_prepare_commit(drm_fd, output_list, output_list->video_request, &output_list->video_plane, 
-					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, 1 /*zpos*/);
+					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos);
 				assert(ret >= 0);
-				ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
+				int flags = DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_ATOMIC_NONBLOCK;
+				ret = drmModeAtomicCommit(drm_fd, output_list->video_request, flags, NULL);
 				assert(!ret);
 
 			} else {
@@ -470,6 +472,7 @@ int main(int argc, char **argv)
 
 	__OnArgument("--osd") {
 		enable_osd = 1;
+		video_zpos = 1;
 		char* elements = __ArgValue;
 		if (!strcmp(elements, "")) {
 			osd_vars.enable_video = 1;
@@ -498,6 +501,18 @@ int main(int argc, char **argv)
 	__OnArgument("--dvr") {
 		enable_dvr = 1;
 		dvr_file = __ArgValue;
+		continue;
+	}
+
+	__OnArgument("--rotation") {
+		char* rot = __ArgValue;
+		if (!strcmp(rot, "90")) {
+			image_rotation = DRM_MODE_ROTATE_90;
+		} else if (!strcmp(rot, "180")) {
+			image_rotation = DRM_MODE_ROTATE_180;
+		} else if (!strcmp(rot, "270")) {
+			image_rotation = DRM_MODE_ROTATE_270;
+		}
 		continue;
 	}
 

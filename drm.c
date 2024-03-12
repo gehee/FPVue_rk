@@ -18,6 +18,8 @@
 #include <rockchip/rk_mpi.h>
 #include <assert.h>
 
+int image_rotation = DRM_MODE_ROTATE_0;
+
 int modeset_open(int *out, const char *node)
 {
 	int fd, ret;
@@ -126,6 +128,7 @@ int set_drm_object_property(drmModeAtomicReq *req, struct drm_object *obj,
 	for (i = 0; i < obj->props->count_props; i++) {
 		if (!strcmp(obj->props_info[i]->name, name)) {
 			prop_id = obj->props_info[i]->prop_id;
+			//printf("found propery %s at %d, value = %d, DRM_MODE_ROTATE_180=%d\n", name, prop_id, obj->props->prop_values[i], DRM_MODE_ROTATE_180);
 			break;
 		}
 	}
@@ -541,6 +544,10 @@ int modeset_prepare(int fd, struct modeset_output *output_list)
 int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, 
 	int fb_id, int width, int height, int zpos)
 {
+	if (set_drm_object_property(req, plane, "rotation", image_rotation) < 0) {
+		printf("set_drm_object_property rotation %m", errno);
+		return -1;
+	}
 	if (set_drm_object_property(req, &out->connector, "CRTC_ID", out->crtc.id) < 0)
 		return -1;
 	if (set_drm_object_property(req, &out->crtc, "MODE_ID", out->mode_blob_id) < 0)

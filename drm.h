@@ -25,6 +25,8 @@
 #include <rockchip/rk_mpi.h>
 #include <assert.h>
 
+extern int image_rotation;
+
 struct drm_object {
 	drmModeObjectProperties *props;
 	drmModePropertyRes **props_info;
