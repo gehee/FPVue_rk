@@ -36,5 +36,4 @@ make
 
 ### Known issues
 
-1. OSD is flickering
-2. Crashes when video feed resolution is higher than the screen resolution.
+1. Crashes when video feed resolution is higher than the screen resolution.

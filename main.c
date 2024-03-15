@@ -263,44 +263,51 @@ void *__DISPLAY_THREAD__(void *param)
 		ret = pthread_mutex_unlock(&video_mutex);
 		assert(!ret);
 
-		if (param==NULL) {
-			// show DRM FB in plane
-			drmModeAtomicSetCursor(output_list->video_request, 0);
-			ret = set_drm_object_property(output_list->video_request, &output_list->video_plane, "FB_ID", fb_id);
-			assert(ret>0);
-			ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
-			frame_counter++;
+		// show DRM FB in plane
+		drmModeAtomicSetCursor(output_list->video_request, 0);
+		ret = set_drm_object_property(output_list->video_request, &output_list->video_plane, "FB_ID", fb_id);
+		assert(ret>0);
 
-			clock_gettime(CLOCK_MONOTONIC, &fps_end);
-			uint64_t time_us=(fps_end.tv_sec - fps_start.tv_sec)*1000000ll + ((fps_end.tv_nsec - fps_start.tv_nsec)/1000ll) % 1000000ll;
-			if (time_us >= 1000000) {
-				uint64_t sum = 0;
-				for (int i = 0; i < frame_counter; ++i) {
-					sum += latency_avg[i];
-					if (latency_avg[i] > max_latency) {
-						max_latency = latency_avg[i];
-					}
-					if (latency_avg[i] < min_latency) {
-						min_latency = latency_avg[i];
-					}
+		ret = pthread_mutex_lock(&osd_mutex);
+		assert(!ret);	
+		ret = set_drm_object_property(output_list->video_request, &output_list->osd_plane, "FB_ID", output_list->osd_bufs[output_list->osd_buf_switch].fb);
+		assert(ret>0);
+		drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
+		ret = pthread_mutex_unlock(&osd_mutex);
+
+		assert(!ret);
+		frame_counter++;
+
+		clock_gettime(CLOCK_MONOTONIC, &fps_end);
+		uint64_t time_us=(fps_end.tv_sec - fps_start.tv_sec)*1000000ll + ((fps_end.tv_nsec - fps_start.tv_nsec)/1000ll) % 1000000ll;
+		if (time_us >= osd_vars.refresh_frequency_ms*1000) {
+			uint64_t sum = 0;
+			for (int i = 0; i < frame_counter; ++i) {
+				sum += latency_avg[i];
+				if (latency_avg[i] > max_latency) {
+					max_latency = latency_avg[i];
 				}
-				osd_vars.latency_avg = sum / (frame_counter);
-				osd_vars.latency_max = max_latency;
-				osd_vars.latency_min = min_latency;
-				osd_vars.current_framerate = frame_counter;
-
-				//printf("decoding decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, osd_vars.current_framerate);
-				
-				fps_start = fps_end;
-				frame_counter = 0;
-				max_latency = 0;
-				min_latency = 1844674407370955161;
+				if (latency_avg[i] < min_latency) {
+					min_latency = latency_avg[i];
+				}
 			}
+			osd_vars.latency_avg = sum / (frame_counter);
+			osd_vars.latency_max = max_latency;
+			osd_vars.latency_min = min_latency;
+			osd_vars.current_framerate = frame_counter*(1000/osd_vars.refresh_frequency_ms);
+
+			// printf("decoding decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, osd_vars.current_framerate);
 			
-			struct timespec rtime = frame_stats[output_list->video_poc];
-		    latency_avg[frame_counter] = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
-			//printf("decoding current_latency=%.2f ms\n",  latency_avg[frame_counter]/1000.0);
+			fps_start = fps_end;
+			frame_counter = 0;
+			max_latency = 0;
+			min_latency = 1844674407370955161;
 		}
+		
+		struct timespec rtime = frame_stats[output_list->video_poc];
+		latency_avg[frame_counter] = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
+		//printf("decoding current_latency=%.2f ms\n",  latency_avg[frame_counter]/1000.0);
+		
 	}
 end:	
 	printf("Display thread done.\n");
@@ -437,9 +444,13 @@ void printHelp() {
     "    fpvue [Arguments]\n"
     "\n"
     "  Arguments:\n"
-    "    -p [Port]      - Listen port                            (Default: 5600)\n"
+    "    -p [Port]      - Listen port                              (Default: 5600)\n"
     "\n"
-    "    --osd          - Enable OSD and specifies its element   (Default: video,wfbng)\n"
+    "    --osd          - Enable OSD\n"
+    "\n"
+    "    --osd-elements - Customize osd elements   			(Default: video,wfbng)\n"
+    "\n"
+    "    --osd-refresh  - Defines the delay between osd refresh (Default: 1000 ms)\n"
     "\n"
     "    --dvr          - Save the video feed (no osd) to the provided filename\n"
     "\n", __DATE__
@@ -465,29 +476,6 @@ int main(int argc, char **argv)
 		continue;
 	}
 
-	__OnArgument("--osd") {
-		enable_osd = 1;
-		osd_vars.plane_zpos = 2;
-		char* elements = __ArgValue;
-		if (!strcmp(elements, "")) {
-			osd_vars.enable_video = 1;
-			osd_vars.enable_wfbng = 1;
-			enable_mavlink = 1;
-		} else {
-			char * element = strtok(elements, ",");
-			while( element != NULL ) {
-				if (!strcmp(element, "video")) {
-					osd_vars.enable_video = 1;
-				} else if (!strcmp(element, "wfbng")) {
-					osd_vars.enable_wfbng = 1;
-					enable_mavlink = 1;
-				}
-				element = strtok(NULL, ",");
-			}
-		}
-		continue;
-	}
-
 	__OnArgument("--mavlink-port") {
 		mavlink_port = atoi(__ArgValue);
 		continue;
@@ -496,6 +484,40 @@ int main(int argc, char **argv)
 	__OnArgument("--dvr") {
 		enable_dvr = 1;
 		dvr_file = __ArgValue;
+		continue;
+	}
+
+	__OnArgument("--osd") {
+		enable_osd = 1;
+		osd_vars.plane_zpos = 2;
+		if (osd_vars.refresh_frequency_ms == 0 ){
+			osd_vars.refresh_frequency_ms = 1000;
+		} 
+		osd_vars.enable_video = 1;
+		osd_vars.enable_wfbng = 1;
+		enable_mavlink = 1;
+		continue;
+	}
+
+	__OnArgument("--osd-refresh") {
+		osd_vars.refresh_frequency_ms = atoi(__ArgValue);
+		continue;
+	}
+
+	__OnArgument("--osd-elements") {
+		osd_vars.enable_video = 0;
+		osd_vars.enable_wfbng = 0;
+		char* elements = __ArgValue;
+		char* element = strtok(elements, ",");
+		while( element != NULL ) {
+			if (!strcmp(element, "video")) {
+				osd_vars.enable_video = 1;
+			} else if (!strcmp(element, "wfbng")) {
+				osd_vars.enable_wfbng = 1;
+				enable_mavlink = 1;
+			}
+			element = strtok(NULL, ",");
+		}
 		continue;
 	}
 
@@ -557,7 +579,7 @@ int main(int argc, char **argv)
 	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink;
 	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 	assert(!ret);
-	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, argc==4?argv[3]:NULL);
+	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, NULL);
 	assert(!ret);
 	if (enable_osd) {
 		if (enable_mavlink) {
@@ -566,7 +588,7 @@ int main(int argc, char **argv)
 		}
 		osd_thread_params *args = malloc(sizeof *args);
         args->fd = drm_fd;
-        args->output_list = output_list;
+        args->out = output_list;
 		ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, args);
 		assert(!ret);
 	}
