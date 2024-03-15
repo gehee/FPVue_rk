@@ -13,48 +13,50 @@
 #define PATH_MAX	4096
 
 struct osd_vars osd_vars;
+int osd_thread_signal = 0;
 
-int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
+typedef struct png_closure
 {
-	int ret, flags;
-	struct drm_object *plane = &output_list->osd_plane;
-	struct modeset_buf *buf = &output_list->osd_bufs[output_list->osd_buf_switch ^ 1];
+	unsigned char * iter;
+	unsigned int bytes_left;
+} png_closure_t;
 
-	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, 2 /* zpos*/);
-	if (ret < 0) {
-		fprintf(stderr, "prepare atomic commit failed for osd plane %d: %m\n", plane->id);
-		return ret;
-	}
-
-	/* perform test-only atomic commit */
-	flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
-	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
-	if (ret < 0) {
-		fprintf(stderr, "test-only atomic commit failed for osd plane %d: %m\n", plane->id);
-		return ret;
-	}
-
-	/* initial modeset on all outputs */
-	flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
-	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
-	if (ret < 0)
-		fprintf(stderr, "modeset atomic commit failed for osd plane %d: %m\n", plane->id);
-
-	return ret;
+cairo_status_t on_read_png_stream(png_closure_t * closure, unsigned char * data, unsigned int length)
+{
+	if(length > closure->bytes_left) return CAIRO_STATUS_READ_ERROR;
+	
+	memcpy(data, closure->iter, length);
+	closure->iter += length;
+	closure->bytes_left -= length;
+	return CAIRO_STATUS_SUCCESS;
 }
 
-void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *out, 
-	cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon) {
-    
-	// struct timespec draw_start, draw_end;
-	// clock_gettime(CLOCK_MONOTONIC, &draw_start);
+cairo_surface_t * surface_from_embedded_png(const unsigned char * png, size_t length)
+{
+	int rc = -1;
+	png_closure_t closure[1] = {{
+		.iter = (unsigned char *)png,
+		.bytes_left = length,
+	}};
+	return cairo_image_surface_create_from_png_stream(
+		(cairo_read_func_t)on_read_png_stream,
+		closure);
+}
 
-	struct modeset_buf *buf;
-	unsigned int j,k,off,random;
-	char time_left[5];
+cairo_surface_t *fps_icon;
+cairo_surface_t *lat_icon;
+cairo_surface_t* net_icon;
+
+
+void modeset_paint_framebuffer(struct modeset_output *out) {
+	unsigned int j,k,off;
 	cairo_t* cr;
 	cairo_surface_t *surface;
-	buf = &out->osd_bufs[out->osd_buf_switch ^ 1];
+
+	int write_buf_idx = (out->osd_buf_switch+1) % OSD_BUF_COUNT;
+	struct modeset_buf *buf = &out->osd_bufs[write_buf_idx];
+
+	// TODO(gehee) This is super slow; re-enable with alpha.
 	for (j = 0; j < buf->height; ++j) {
 	    for (k = 0; k < buf->width; ++k) {
 	        off = buf->stride * j + k * 4;
@@ -62,12 +64,8 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	    }
 	}
 
-	int osd_x = buf->width - 300;
 	surface = cairo_image_surface_create_for_data(buf->map, CAIRO_FORMAT_ARGB32, buf->width, buf->height, buf->stride);
 	cr = cairo_create (surface);
-
-	cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-	cairo_set_font_size (cr, 20);
 
 	// stats height
 	int stats_top_margin = 5;
@@ -81,10 +79,34 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 		stats_height+=stats_row_height;
 	} 
 
+	int osd_x = buf->width - 300;
+	if (osd_vars.enable_frame_counter == 1 ){
+		osd_x = buf->width - 600;
+		cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+		cairo_set_font_size (cr, 120);
+		cairo_set_source_rgba(cr, 0, 0, 0, 1); // R, G, B, A
+		cairo_rectangle(cr, osd_x, 0, 1000, 300); 
+		cairo_fill(cr);
+		char str[80];
+		//sprintf(str, "%d", osd_vblank_count);
+		cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
+		cairo_move_to(cr, osd_x + 20, 200);
+		cairo_show_text(cr, str);
+		out->osd_buf_switch = write_buf_idx;
+		return;
+	}
+
+	// struct timespec curr_time;
+	// clock_gettime(CLOCK_MONOTONIC, &curr_time);
+	// uint64_t time_us=(curr_time.tv_sec - last_osd_refresh.tv_sec)*1000000ll + ((curr_time.tv_nsec - last_osd_refresh.tv_nsec)/1000ll) % 1000000ll;
+	// if (time_us<=1000000) { // refresh every 1000ms
+	// 	return;
+	// }
 	cairo_set_source_rgba(cr, 0, 0, 0, 0.4); // R, G, B, A
 	cairo_rectangle(cr, osd_x, 0, 300, stats_height); 
 	cairo_fill(cr);
-	
+	cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+	cairo_set_font_size (cr, 20);
 
 	if (osd_vars.enable_video) {
 		row_count++;
@@ -148,63 +170,23 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 		cairo_show_text(cr, msg);
 	}
 
-	// Commit fb change.
-	int ret;
-	drmModeAtomicReq *req = out->osd_request;
-	drmModeAtomicSetCursor(req, 0);
-	int fb = out->osd_bufs[out->osd_buf_switch ^ 1].fb;
-  	ret = set_drm_object_property(req, plane, "FB_ID", fb);
-	assert(ret>0);
-	ret = drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_NONBLOCK, NULL);
-
-	// clock_gettime(CLOCK_MONOTONIC, &draw_end);
-	// uint64_t time_us=(draw_end.tv_sec - draw_start.tv_sec)*1000000ll + ((draw_end.tv_nsec - draw_start.tv_nsec)/1000ll) % 1000000ll;
-	// printf("osd drawn in %.2f ms\n", time_us/1000.0);			
-
 	// Switch buffer at each draw call
-	out->osd_buf_switch ^= 1;
+	out->osd_buf_switch = write_buf_idx;
 }
 
-int osd_thread_signal;
-
-typedef struct png_closure
-{
-	unsigned char * iter;
-	unsigned int bytes_left;
-} png_closure_t;
-
-cairo_status_t on_read_png_stream(png_closure_t * closure, unsigned char * data, unsigned int length)
-{
-	if(length > closure->bytes_left) return CAIRO_STATUS_READ_ERROR;
-	
-	memcpy(data, closure->iter, length);
-	closure->iter += length;
-	closure->bytes_left -= length;
-	return CAIRO_STATUS_SUCCESS;
+void init_icons() {
+	fps_icon = surface_from_embedded_png(framerate_icon, framerate_icon_length);
+	lat_icon = surface_from_embedded_png(latency_icon, latency_icon_length);
+	net_icon = surface_from_embedded_png(bandwidth_icon, bandwidth_icon_length);
 }
 
-cairo_surface_t * surface_from_embedded_png(const unsigned char * png, size_t length)
-{
-	int rc = -1;
-	png_closure_t closure[1] = {{
-		.iter = (unsigned char *)png,
-		.bytes_left = length,
-	}};
-	return cairo_image_surface_create_from_png_stream(
-		(cairo_read_func_t)on_read_png_stream,
-		closure);
-}
 
 void *__OSD_THREAD__(void *param) {
-	osd_thread_params *p = param;
-	cairo_surface_t *fps_icon = surface_from_embedded_png(framerate_icon, framerate_icon_length);
-	cairo_surface_t *lat_icon = surface_from_embedded_png(latency_icon, latency_icon_length);
-	cairo_surface_t* net_icon = surface_from_embedded_png(bandwidth_icon, bandwidth_icon_length);
-	modeset_perform_modeset_osd(p->fd, p->output_list);
+	init_icons();
+	struct modeset_output *out = param;
 	while(!osd_thread_signal) {
-		modeset_draw_osd(p->fd, &p->output_list->osd_plane, p->output_list, fps_icon, lat_icon, net_icon);
+		modeset_paint_framebuffer(out);
 		usleep(1000000);
     }
-	// TODO(gehee) This code is never reached.
 	printf("OSD thread done.\n");
 }

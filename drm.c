@@ -387,25 +387,18 @@ void modeset_destroy_fb(int fd, struct modeset_buf *buf)
 }
 
 
-int modeset_setup_framebuffers(int fd, drmModeConnector *conn,
-				      struct modeset_output *out)
+int modeset_setup_framebuffers(int fd, drmModeConnector *conn, struct modeset_output *out)
 {
-	out->osd_bufs[0].width = conn->modes[0].hdisplay;
-	out->osd_bufs[0].height = conn->modes[0].vdisplay;
-	out->osd_bufs[1].width = out->osd_bufs[0].width;
-	out->osd_bufs[1].height = out->osd_bufs[0].height;
-	int ret = modeset_create_fb(fd, &out->osd_bufs[0]);
-	if (ret) {
-		return ret;
+	for (int i=0; i<OSD_BUF_COUNT; i++) {
+		out->osd_bufs[i].width = conn->modes[0].hdisplay;
+		out->osd_bufs[i].height = conn->modes[0].vdisplay;
+		int ret = modeset_create_fb(fd, &out->osd_bufs[i]);
+		if (ret) {
+			return ret;
+		}
 	}
-	ret = modeset_create_fb(fd, &out->osd_bufs[1]);
-	if (ret) {
-		return ret;
-	}
-
 	out->video_crtc_width = conn->modes[0].hdisplay;
 	out->video_crtc_height = conn->modes[0].vdisplay;
-
 	return 0;
 }
 
@@ -414,14 +407,15 @@ void modeset_output_destroy(int fd, struct modeset_output *out)
 {
 	modeset_destroy_objects(fd, out);
 
-	modeset_destroy_fb(fd, &out->osd_bufs[0]);
-	modeset_destroy_fb(fd, &out->osd_bufs[1]);
+	for (int i=0; i<OSD_BUF_COUNT; i++) { 
+		modeset_destroy_fb(fd, &out->osd_bufs[i]);
+	}
 	drmModeDestroyPropertyBlob(fd, out->mode_blob_id);
 	free(out);
 }
 
 
-struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn)
+struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
 {
 	int ret;
 	struct modeset_output *out;
@@ -442,9 +436,27 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 		goto out_error;
 	}
 
-	memcpy(&out->mode, &conn->modes[0], sizeof(out->mode));
-	if (drmModeCreatePropertyBlob(fd, &out->mode, sizeof(out->mode),
-	                              &out->mode_blob_id) != 0) {
+	int fc = 0;
+	if (mode_width>0 && mode_height>0 && mode_vrefresh>0) {
+		fc = -1;
+		printf( "Available modes:\n");
+		for (int i = 0; i < conn->count_modes; i++ ) {
+			printf( "%d : %dx%d@%d\n",i, conn->modes[i].hdisplay, conn->modes[i].vdisplay , conn->modes[i].vrefresh );
+			if (conn->modes[i].hdisplay == mode_width &&
+			conn->modes[i].vdisplay == mode_height &&
+			conn->modes[i].vrefresh == mode_vrefresh
+			) {
+				fc = i;
+			}
+		}
+		if (fc < 0) {
+			fprintf(stderr, "couldn't find a matching mode for %dx%d@%d\n", mode_width , mode_height , mode_vrefresh);
+			goto out_error;
+		} 
+		printf( "Using screen mode %dx%d@%d\n",conn->modes[fc].hdisplay, conn->modes[fc].vdisplay , conn->modes[fc].vrefresh );
+	}
+	memcpy(&out->mode, &conn->modes[fc], sizeof(out->mode));
+	if (drmModeCreatePropertyBlob(fd, &out->mode, sizeof(out->mode), &out->mode_blob_id) != 0) {
 		fprintf(stderr, "couldn't create a blob property\n");
 		goto out_error;
 	}
@@ -467,7 +479,7 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 		fprintf(stderr, "no valid osd plane with format ARGB8888 for crtc %u\n", out->crtc.id);
 		goto out_blob;
 	}
-	fprintf(stdout, "Using plane %d (NV12) for OSD\n",  out->osd_plane.id);
+	fprintf(stdout, "Using plane %d (ARGB8888) for OSD\n",  out->osd_plane.id);
 
 	ret = modeset_setup_objects(fd, out);
 	if (ret) {
@@ -482,10 +494,8 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 		goto out_obj;
 	}
 
-	out->video_request = drmModeAtomicAlloc();
-	assert(out->video_request);
-	out->osd_request = drmModeAtomicAlloc();
-	assert(out->video_request);
+	out->request = drmModeAtomicAlloc();
+	assert(out->request);
 
 	return out;
 
@@ -499,7 +509,7 @@ out_error:
 }
 
 
-int modeset_prepare(int fd, struct modeset_output *output_list)
+int modeset_prepare(int fd, struct modeset_output *output, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
 {
 	drmModeRes *res;
 	drmModeConnector *conn;
@@ -521,14 +531,14 @@ int modeset_prepare(int fd, struct modeset_output *output_list)
 			continue;
 		}
 
-		out = modeset_output_create(fd, res, conn);
+		out = modeset_output_create(fd, res, conn, mode_width, mode_height, mode_vrefresh);
 		drmModeFreeConnector(conn);
 		if (!out)
 			continue;
 
-		*output_list = *out;
+		*output = *out;
 	}
-	if (!output_list) {
+	if (!output) {
 		fprintf(stderr, "couldn't create any outputs\n");
 		return -1;
 	}
@@ -537,10 +547,42 @@ int modeset_prepare(int fd, struct modeset_output *output_list)
 	return 0;
 }
 
-
-int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, 
-	int fb_id, int width, int height, int zpos)
+int modeset_perform_modeset(int fd, struct modeset_output *out)
 {
+	int ret, flags;
+	ret = modeset_atomic_prepare_commit(fd, out, &out->video_plane, out->video_cur_fb_id, out->video_frm_width, out->video_frm_height, 1);
+	if (ret < 0) {
+		fprintf(stderr, "prepare atomic commit failed: %m\n", errno);
+		return ret;
+	}
+	// struct modeset_buf *buf = &out->osd_bufs[0];
+	// ret = modeset_atomic_prepare_commit(fd, out, &out->osd_plane, buf->fb, buf->width, buf->height, 2);
+	// if (ret < 0) {
+	// 	fprintf(stderr, "prepare atomic commit failed: %m\n", errno);
+	// 	return ret;
+	// }
+
+	/* perform test-only atomic commit */
+	// flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
+	// ret = drmModeAtomicCommit(fd, out->request, flags, NULL);
+	// if (ret < 0) {
+	// 	fprintf(stderr, "test-only atomic commit failed: %m\n", errno);
+	// 	return ret;
+	// }
+
+	/* initial modeset on all outputs */
+	flags = DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_PAGE_FLIP_EVENT;
+	ret = drmModeAtomicCommit(fd, out->request, flags, NULL);
+	if (ret < 0)
+		fprintf(stderr, "modeset atomic commit failed: %m\n", errno);
+
+	return ret;
+}
+
+
+int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, struct drm_object *plane, int fb_id, int width, int height, int zpos)
+{
+	drmModeAtomicReq *req = out->request;
 	if (set_drm_object_property(req, &out->connector, "CRTC_ID", out->crtc.id) < 0)
 		return -1;
 	if (set_drm_object_property(req, &out->crtc, "MODE_ID", out->mode_blob_id) < 0)
@@ -581,34 +623,30 @@ int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAto
 	return 0;
 }
 
-void restore_planes_zpos(int fd, struct modeset_output *output_list) {
+void restore_planes_zpos(int fd, struct modeset_output *output) {
 	// restore osd zpos
 	int ret, flags;
-	struct modeset_buf *buf = &output_list->osd_bufs[output_list->osd_buf_switch ^ 1];
+	struct modeset_buf *buf = &output->osd_bufs[0];
 
 	// TODO(geehe) Find a more elegant way to do this.
-	int64_t zpos = get_property_value(fd, output_list->osd_plane.props, "zpos");
-	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, &output_list->osd_plane, buf->fb, buf->width, buf->height, zpos);
+	int64_t zpos = get_property_value(fd, output->osd_plane.props, "zpos");
+	ret = modeset_atomic_prepare_commit(fd, output, &output->osd_plane, buf->fb, buf->width, buf->height, zpos);
 	if (ret < 0) {
-		fprintf(stderr, "prepare atomic commit failed for plane %d, %m\n", output_list->osd_plane.id);
+		fprintf(stderr, "prepare atomic commit failed, %m\n", errno);
 		return;
 	}
-	ret = drmModeAtomicCommit(fd, output_list->osd_request, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-	if (ret < 0) 
-		fprintf(stderr, "modeset atomic commit failed for plane %d, %m\n", output_list->osd_plane.id);
-
-	zpos = get_property_value(fd, output_list->video_plane.props, "zpos");
-	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->video_request, &output_list->video_plane, buf->fb, buf->width, buf->height, zpos);
+	zpos = get_property_value(fd, output->video_plane.props, "zpos");
+	ret = modeset_atomic_prepare_commit(fd, output, &output->video_plane, buf->fb, buf->width, buf->height, zpos);
 	if (ret < 0) {
-		fprintf(stderr, "prepare atomic commit failed for plane %d, %m\n", output_list->video_plane.id);
+		fprintf(stderr, "prepare atomic commit failed, %m\n", errno);
 		return;
 	}
-	ret = drmModeAtomicCommit(fd, output_list->video_request, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+	ret = drmModeAtomicCommit(fd, output->request, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
 	if (ret < 0) 
-		fprintf(stderr, "modeset atomic commit failed for plane %d, %m\n", output_list->video_plane.id);
+		fprintf(stderr, "modeset atomic commit failed, %m\n", errno);
 }
 
-void modeset_cleanup(int fd, struct modeset_output *output_list)
+void modeset_cleanup(int fd, struct modeset_output *output)
 {
-	modeset_output_destroy(fd, output_list);
+	modeset_output_destroy(fd, output);
 }

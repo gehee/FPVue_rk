@@ -6,6 +6,8 @@
 
 // OSD Vars
 struct osd_vars {
+	bool enable;
+
 	// Video Decoder
     bool enable_video;
 	int current_framerate;
@@ -60,20 +62,16 @@ struct osd_vars {
     char s3[30];
     char s4[30];
     char* ptr;
+
+    bool enable_frame_counter;
 };
 
 extern struct osd_vars osd_vars;
 extern int osd_thread_signal;
 
-typedef struct {
-	struct modeset_output *output_list;
-	int fd;
-} osd_thread_params;
+void modeset_paint_framebuffer(struct modeset_output *out);
 
-int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list);
-
-void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *out, 
-	cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon);
+void init_icons();
 
 void *__OSD_THREAD__(void *param);
 

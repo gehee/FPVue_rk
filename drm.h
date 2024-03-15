@@ -25,6 +25,8 @@
 #include <rockchip/rk_mpi.h>
 #include <assert.h>
 
+#define OSD_BUF_COUNT	2
+
 struct drm_object {
 	drmModeObjectProperties *props;
 	drmModePropertyRes **props_info;
@@ -52,21 +54,23 @@ struct modeset_output {
 	int video_crtc_width;
 	int video_crtc_height;
 
+	drmModeAtomicReq *request;
+
 	// OSD variables
-	drmModeAtomicReq *osd_request;
 	unsigned int osd_buf_switch;
-	struct modeset_buf osd_bufs[2];
+	struct modeset_buf osd_bufs[OSD_BUF_COUNT];
 	struct drm_object osd_plane;
 
 	// Video variables
-	drmModeAtomicReq *video_request;
 	struct drm_object video_plane;
 	RK_U32 video_frm_width;
 	RK_U32 video_frm_height;
 	int video_fb_x, video_fb_y, video_fb_width, video_fb_height;
 	int video_fb_id;
+	int video_cur_fb_id;
 	int video_skipped_frames;
 	int video_poc;
+	bool pflip_pending;
 
 	bool cleanup;
 };
@@ -100,14 +104,16 @@ int modeset_setup_framebuffers(int fd, drmModeConnector *conn, struct modeset_ou
 
 void modeset_output_destroy(int fd, struct modeset_output *out);
 
-struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn);
+struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh);
 
-int modeset_prepare(int fd, struct modeset_output *output_list);
+int modeset_prepare(int fd, struct modeset_output *output_list, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh);
 
-int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, int fb_id, int width, int height, int zpos);
+int modeset_perform_modeset(int fd, struct modeset_output *out);
 
-void restore_planes_zpos(int fd, struct modeset_output *output_list);
+int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, struct drm_object *plane, int fb_id, int width, int height, int zpos);
 
-void modeset_cleanup(int fd, struct modeset_output *output_list);
+void restore_planes_zpos(int fd, struct modeset_output *output);
+
+void modeset_cleanup(int fd, struct modeset_output *output);
 
 #endif
