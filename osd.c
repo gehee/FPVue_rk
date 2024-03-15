@@ -48,7 +48,6 @@ cairo_surface_t* net_icon;
 
 int osd_vblank_count = 0;
 struct timespec last_osd_refresh;
-int enable_frame_counter = 0;
 
 void modeset_paint_framebuffer(struct modeset_output *out) {
 	osd_vblank_count++;
@@ -81,8 +80,8 @@ void modeset_paint_framebuffer(struct modeset_output *out) {
 	} 
 
 	int osd_x = buf->width - 300;
-	if (enable_frame_counter == 1 ){
-		osd_x = buf->width - 800;
+	if (osd_vars.enable_frame_counter == 1 ){
+		osd_x = buf->width - 600;
 		cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
 		cairo_set_font_size (cr, 120);
 		cairo_set_source_rgba(cr, 0, 0, 0, 1); // R, G, B, A
@@ -91,7 +90,7 @@ void modeset_paint_framebuffer(struct modeset_output *out) {
 		char str[80];
 		sprintf(str, "%d", osd_vblank_count);
 		cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
-		cairo_move_to(cr, osd_x, 200);
+		cairo_move_to(cr, osd_x + 20, 200);
 		cairo_show_text(cr, str);
 		out->osd_buf_switch ^= 1;
 		return;

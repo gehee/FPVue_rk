@@ -550,6 +550,8 @@ int main(int argc, char **argv)
 				} else if (!strcmp(element, "wfbng")) {
 					osd_vars.enable_wfbng = 1;
 					enable_mavlink = 1;
+				} else if (!strcmp(element, "framecounter")) {
+					osd_vars.enable_frame_counter = 1;
 				}
 				element = strtok(NULL, ",");
 			}

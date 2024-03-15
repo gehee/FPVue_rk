@@ -62,6 +62,8 @@ struct osd_vars {
     char s3[30];
     char s4[30];
     char* ptr;
+
+    bool enable_frame_counter;
 };
 
 extern struct osd_vars osd_vars;
