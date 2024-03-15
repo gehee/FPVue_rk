@@ -37,12 +37,12 @@
 #include "mavlink/common/mavlink.h"
 #include "mavlink.h"
 
-
-
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
 #define MAX_FRAMES 24		// min 16 and 20+ recommended (mpp/readme.txt)
 
 #define CODEC_ALIGN(x, a)   (((x)+(a)-1)&~((a)-1))
+
+pthread_t tid_frame, tid_display, tid_mavlink;
 
 struct {
 	MppCtx		  ctx;
@@ -59,12 +59,11 @@ struct {
 } mpi;
 
 struct timespec frame_stats[1000];
+struct timespec frame_stats_byfd[1000];
 
-struct modeset_output *output_list;
+struct modeset_output *output;
 int frm_eos = 0;
 int drm_fd = 0;
-pthread_mutex_t video_mutex;
-pthread_cond_t video_cond;
 
 // OSD Vars
 struct video_stats {
@@ -78,6 +77,147 @@ int bw_curr = 0;
 long long bw_stats[10];
 
 
+/*
+ * modeset_page_flip_event() changes. Now that we are using page_flip_handler2,
+ * we also receive the CRTC that is responsible for this event. When using the
+ * atomic API we commit multiple CRTC's at once, so we need the information of
+ * what output caused the event in order to schedule a new page-flip for it.
+ */
+
+
+int last_video_fb = 0;
+int last_osd_fb = 0;
+
+int displayed_frames = 0;
+uint64_t latency_avg[200];
+uint64_t min_latency = 1844674407370955161; // almost MAX_uint64_t
+uint64_t max_latency = 0;
+struct timespec osd_vars_start, osd_vars_end;
+
+static void modeset_page_flip_event(int fd, unsigned int frame,
+				    unsigned int sec, unsigned int usec,
+				    unsigned int crtc_id, void *data)
+{
+	output->pflip_pending = false;
+	drmModeAtomicReq *req = output->request;
+
+	// Update OSD vars
+	if (last_video_fb != output->video_cur_fb_id) {
+		displayed_frames++;
+		clock_gettime(CLOCK_MONOTONIC, &osd_vars_end);
+		uint64_t time_us=(osd_vars_end.tv_sec - osd_vars_start.tv_sec)*1000000ll + ((osd_vars_end.tv_nsec - osd_vars_start.tv_nsec)/1000ll) % 1000000ll;
+		if (time_us >= 1000000) {
+			uint64_t sum = 0;
+			for (int i = 0; i < displayed_frames; ++i) {
+				sum += latency_avg[i];
+				if (latency_avg[i] > max_latency) {
+					max_latency = latency_avg[i];
+				}
+				if (latency_avg[i] < min_latency) {
+					min_latency = latency_avg[i];
+				}
+			}
+			osd_vars.latency_avg = sum / (displayed_frames);
+			osd_vars.latency_max = max_latency;
+			osd_vars.latency_min = min_latency;
+
+			//printf("display latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, displayed_frames);	
+			
+			osd_vars_start = osd_vars_end;
+			displayed_frames = 0;
+			max_latency = 0;
+			min_latency = 1844674407370955161;
+		}
+		struct timespec rtime = frame_stats_byfd[output->video_cur_fb_id];
+		latency_avg[displayed_frames] = (osd_vars_end.tv_sec - rtime.tv_sec)*1000000ll + ((osd_vars_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
+	}
+
+	int ret;
+	drmModeAtomicSetCursor(req, 0);
+
+	// Render OSD
+	int osd_fb = output->osd_bufs[output->osd_buf_switch ^ 1].fb;
+	if (osd_vars.enable) {
+		modeset_paint_framebuffer(output);
+		if (osd_fb!=last_osd_fb) {
+			ret = set_drm_object_property(req, &output->osd_plane, "FB_ID", osd_fb);
+			assert(ret>0);
+		}
+	}
+
+	ret = set_drm_object_property(req, &output->video_plane, "FB_ID", output->video_cur_fb_id);
+	assert(ret>0);
+	
+	int flags = DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK;
+	ret = drmModeAtomicCommit(fd,  req, flags, NULL);
+	if (ret < 0) {
+		fprintf(stderr, "atomic commit failed, %m\n", errno);
+		return;
+	}
+	output->pflip_pending = true;
+	last_video_fb=output->video_cur_fb_id;
+	last_osd_fb=osd_fb;
+}
+
+// signal
+
+int signal_flag = 0;
+
+void sig_handler(int signum)
+{
+	printf("Received signal %d\n", signum);
+	signal_flag++;
+	mavlink_thread_signal++;
+}
+
+void *__DISPLAY_THREAD__(void *param)
+{
+	int ret;
+	fd_set fds;
+	time_t start, cur;
+	drmEventContext ev;
+
+	srand(time(&start));
+	FD_ZERO(&fds);
+	memset(&ev, 0, sizeof(ev));
+
+	/* 3 is the first version that allow us to use page_flip_handler2, which
+	 * is just like page_flip_handler but with the addition of passing the
+	 * crtc_id as argument to the function that will handle page-flip events
+	 * (in our case, modeset_page_flip_event()). This is good because we can
+	 * find out for what output the page-flip happened.
+	 *
+	 * The usage of page_flip_handler2 is the reason why we needed to verify
+	 * the support for DRM_CAP_CRTC_IN_VBLANK_EVENT.
+	 */
+	ev.version = 3;
+	ev.page_flip_handler2 = modeset_page_flip_event;
+
+	ret = modeset_perform_modeset(drm_fd, output);
+	assert(ret >= 0);
+
+	/* wait for VBLANK or input events */
+	while (!signal_flag ) {
+		FD_SET(0, &fds);
+		FD_SET(drm_fd, &fds);
+
+		ret = select(drm_fd + 1, &fds, NULL, NULL, NULL);
+		if (ret < 0) {
+			fprintf(stderr, "select() failed with %d: %m\n", errno);
+			break;
+		} else if (FD_ISSET(0, &fds)) {
+			fprintf(stderr, "exit due to user-input\n");
+			break;
+		} else if (FD_ISSET(drm_fd, &fds)) {
+			/* read the fd looking for events and handle each event
+			 * by calling modeset_page_flip_event() */
+			drmHandleEvent(drm_fd, &ev);
+		}
+	}
+	printf("Display thread done.\n");
+}
+
+
 // __FRAME_THREAD__
 //
 // - allocate DRM buffers and DRM FB based on frame size
@@ -88,7 +228,11 @@ void *__FRAME_THREAD__(void *param)
 	int ret;
 	int i;	
 	MppFrame  frame  = NULL;
-	int frid = 0;
+	int decoded_frame = 0;
+	uint64_t latency_avg[200];
+	uint64_t min_latency = 1844674407370955161; // almost MAX_uint64_t
+	uint64_t max_latency = 0;
+	struct timespec fps_start, fps_end;
 
 	while (!frm_eos) {
 		struct timespec ts, ats;
@@ -102,22 +246,22 @@ void *__FRAME_THREAD__(void *param)
 				// new resolution
 				assert(!mpi.frm_grp);
 
-				output_list->video_frm_width = CODEC_ALIGN(mpp_frame_get_width(frame),16);
-				output_list->video_frm_height = CODEC_ALIGN(mpp_frame_get_height(frame),16);
+				output->video_frm_width = CODEC_ALIGN(mpp_frame_get_width(frame),16);
+				output->video_frm_height = CODEC_ALIGN(mpp_frame_get_height(frame),16);
 				RK_U32 hor_stride = mpp_frame_get_hor_stride(frame);
 				RK_U32 ver_stride = mpp_frame_get_ver_stride(frame);
 				MppFrameFormat fmt = mpp_frame_get_fmt(frame);
 				assert((fmt == MPP_FMT_YUV420SP) || (fmt == MPP_FMT_YUV420SP_10BIT));
 
-				printf("Frame info changed %d(%d)x%d(%d)\n", output_list->video_frm_width, hor_stride, output_list->video_frm_height, ver_stride);
+				printf("Frame info changed %d(%d)x%d(%d)\n", output->video_frm_width, hor_stride, output->video_frm_height, ver_stride);
 			
-				output_list->video_fb_x = 0;
-				output_list->video_fb_y = 0;
-				output_list->video_fb_width = output_list->video_crtc_width;
-				output_list->video_fb_height = output_list->video_crtc_height;		
+				output->video_fb_x = 0;
+				output->video_fb_y = 0;
+				output->video_fb_width = output->video_crtc_width;
+				output->video_fb_height = output->video_crtc_height;		
 
-				osd_vars.video_width = output_list->video_frm_width;
-				osd_vars.video_height = output_list->video_frm_height;
+				osd_vars.video_width = output->video_frm_width;
+				osd_vars.video_height = output->video_frm_height;
 
 				// create new external frame group and allocate (commit flow) new DRM buffers and DRM FB
 				assert(!mpi.frm_grp);
@@ -173,7 +317,7 @@ void *__FRAME_THREAD__(void *param)
 					handles[1] = mpi.frame_to_drm[i].handle;
 					offsets[1] = pitches[0] * ver_stride;
 					pitches[1] = pitches[0];
-					ret = drmModeAddFB2(drm_fd, output_list->video_frm_width, output_list->video_frm_height, DRM_FORMAT_NV12, handles, pitches, offsets, &mpi.frame_to_drm[i].fb_id, 0);
+					ret = drmModeAddFB2(drm_fd, output->video_frm_width, output->video_frm_height, DRM_FORMAT_NV12, handles, pitches, offsets, &mpi.frame_to_drm[i].fb_id, 0);
 					assert(!ret);
 				}
 
@@ -181,11 +325,9 @@ void *__FRAME_THREAD__(void *param)
 				ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_EXT_BUF_GROUP, mpi.frm_grp);
 				ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_INFO_CHANGE_READY, NULL);
 
-				drmModeAtomicSetCursor(output_list->video_request, 0);
-				ret = modeset_atomic_prepare_commit(drm_fd, output_list, output_list->video_request, &output_list->video_plane, 
-					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, 1 /*zpos*/);
-				assert(ret >= 0);
-				ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
+				output->video_cur_fb_id = mpi.frame_to_drm[0].fb_id;
+				
+				ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, NULL);
 				assert(!ret);
 
 			} else {
@@ -197,7 +339,7 @@ void *__FRAME_THREAD__(void *param)
 
 				MppBuffer buffer = mpp_frame_get_buffer(frame);					
 				if (buffer) {
-					output_list->video_poc = mpp_frame_get_poc(frame);
+					output->video_poc = mpp_frame_get_poc(frame);
 					// find fb_id by frame prime_fd
 					MppBufferInfo info;
 					ret = mpp_buffer_info_get(buffer, &info);
@@ -208,18 +350,34 @@ void *__FRAME_THREAD__(void *param)
 					assert(i!=MAX_FRAMES);
 
 					ts = ats;
-					frid++;
-					
-					// send DRM FB to display thread
-					ret = pthread_mutex_lock(&video_mutex);
-					assert(!ret);
-					if (output_list->video_fb_id) output_list->video_skipped_frames++;
-					output_list->video_fb_id = mpi.frame_to_drm[i].fb_id;
-					ret = pthread_cond_signal(&video_cond);
-					assert(!ret);
-					ret = pthread_mutex_unlock(&video_mutex);
-					assert(!ret);
-					
+
+					output->video_cur_fb_id = mpi.frame_to_drm[i].fb_id;
+					frame_stats_byfd[output->video_cur_fb_id] = frame_stats[output->video_poc];
+					decoded_frame++;
+
+					clock_gettime(CLOCK_MONOTONIC, &fps_end);
+					uint64_t time_us=(fps_end.tv_sec - fps_start.tv_sec)*1000000ll + ((fps_end.tv_nsec - fps_start.tv_nsec)/1000ll) % 1000000ll;
+					if (time_us >= 1000000) {
+						uint64_t sum = 0;
+						for (int i = 0; i < decoded_frame; ++i) {
+							sum += latency_avg[i];
+							if (latency_avg[i] > max_latency) {
+								max_latency = latency_avg[i];
+							}
+							if (latency_avg[i] < min_latency) {
+								min_latency = latency_avg[i];
+							}
+						}
+						//printf("decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", (sum / (decoded_frame))/1000.0, max_latency/1000.0, min_latency/1000.0, decoded_frame);	
+
+						fps_start = fps_end;
+						osd_vars.current_framerate = decoded_frame;
+						decoded_frame = 0;
+						max_latency = 0;
+						min_latency = 1844674407370955161;
+					}
+					struct timespec rtime = frame_stats[output->video_poc];
+					latency_avg[decoded_frame] = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
 				}
 			}
 			
@@ -229,96 +387,6 @@ void *__FRAME_THREAD__(void *param)
 		} else assert(0);
 	}
 	printf("Frame thread done.\n");
-}
-
-
-void *__DISPLAY_THREAD__(void *param)
-{
-	int ret;	
-	int frame_counter = 0;
-	uint64_t latency_avg[200];
-	uint64_t min_latency = 1844674407370955161; // almost MAX_uint64_t
-	uint64_t max_latency = 0;
-    struct timespec fps_start, fps_end;
-	clock_gettime(CLOCK_MONOTONIC, &fps_start);
-
-	while (!frm_eos) {
-		int fb_id;
-		
-		ret = pthread_mutex_lock(&video_mutex);
-		assert(!ret);
-		while (output_list->video_fb_id==0) {
-			pthread_cond_wait(&video_cond, &video_mutex);
-			assert(!ret);
-			if (output_list->video_fb_id == 0 && frm_eos) {
-				ret = pthread_mutex_unlock(&video_mutex);
-				assert(!ret);
-				goto end;
-			}
-		}
-		struct timespec ts, ats;
-		clock_gettime(CLOCK_MONOTONIC, &ats);
-		fb_id = output_list->video_fb_id;
-		if (output_list->video_skipped_frames) 
-			printf("Display skipped %d frame.\n", output_list->video_skipped_frames);
-		output_list->video_fb_id=0;
-		output_list->video_skipped_frames=0;
-		ret = pthread_mutex_unlock(&video_mutex);
-		assert(!ret);
-
-		if (param==NULL) {
-			// show DRM FB in plane
-			drmModeAtomicSetCursor(output_list->video_request, 0);
-			ret = set_drm_object_property(output_list->video_request, &output_list->video_plane, "FB_ID", fb_id);
-			assert(ret>0);
-			ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
-			frame_counter++;
-
-			clock_gettime(CLOCK_MONOTONIC, &fps_end);
-			uint64_t time_us=(fps_end.tv_sec - fps_start.tv_sec)*1000000ll + ((fps_end.tv_nsec - fps_start.tv_nsec)/1000ll) % 1000000ll;
-			if (time_us >= 1000000) {
-				uint64_t sum = 0;
-				for (int i = 0; i < frame_counter; ++i) {
-					sum += latency_avg[i];
-					if (latency_avg[i] > max_latency) {
-						max_latency = latency_avg[i];
-					}
-					if (latency_avg[i] < min_latency) {
-						min_latency = latency_avg[i];
-					}
-				}
-				osd_vars.latency_avg = sum / (frame_counter);
-				osd_vars.latency_max = max_latency;
-				osd_vars.latency_min = min_latency;
-				osd_vars.current_framerate = frame_counter;
-
-				//printf("decoding decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, osd_vars.current_framerate);
-				
-				fps_start = fps_end;
-				frame_counter = 0;
-				max_latency = 0;
-				min_latency = 1844674407370955161;
-			}
-			
-			struct timespec rtime = frame_stats[output_list->video_poc];
-		    latency_avg[frame_counter] = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
-			//printf("decoding current_latency=%.2f ms\n",  latency_avg[frame_counter]/1000.0);
-		}
-	}
-end:	
-	printf("Display thread done.\n");
-}
-
-// signal
-
-int signal_flag = 0;
-
-void sig_handler(int signum)
-{
-	printf("Received signal %d\n", signum);
-	signal_flag++;
-	mavlink_thread_signal++;
-	osd_thread_signal++;
 }
 
 
@@ -455,7 +523,6 @@ int main(int argc, char **argv)
 {
 	int ret;	
 	int i, j;
-	int enable_osd = 0;
 	int enable_mavlink = 0;
 	uint16_t listen_port = 5600;
 	uint16_t mavlink_port = 14550;
@@ -469,7 +536,7 @@ int main(int argc, char **argv)
 	}
 
 	__OnArgument("--osd") {
-		enable_osd = 1;
+		osd_vars.enable = 1;
 		char* elements = __ArgValue;
 		if (!strcmp(elements, "")) {
 			osd_vars.enable_video = 1;
@@ -487,6 +554,7 @@ int main(int argc, char **argv)
 				element = strtok(NULL, ",");
 			}
 		}
+		init_icons();
 		continue;
 	}
 
@@ -519,11 +587,11 @@ int main(int argc, char **argv)
 	}
 	assert(drm_fd >= 0);
 
-	output_list = (struct modeset_output *)malloc(sizeof(struct modeset_output));
+	output = (struct modeset_output *)malloc(sizeof(struct modeset_output));
 
-	output_list->video_request = drmModeAtomicAlloc();
-	assert(output_list->video_request);
-	ret = modeset_prepare(drm_fd, output_list);
+	output->request = drmModeAtomicAlloc();
+	assert(output->request);
+	ret = modeset_prepare(drm_fd, output);
 	assert(!ret);
 	
 	////////////////////////////////// MPI SETUP
@@ -546,26 +614,10 @@ int main(int argc, char **argv)
 	assert(!ret);
 
  	//////////////////// THREADS SETUP
-	
-	ret = pthread_mutex_init(&video_mutex, NULL);
-	assert(!ret);
-	ret = pthread_cond_init(&video_cond, NULL);
-	assert(!ret);
-
-	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink;
 	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 	assert(!ret);
-	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, argc==4?argv[3]:NULL);
-	assert(!ret);
-	if (enable_osd) {
-		if (enable_mavlink) {
-			ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, &signal_flag);
-			assert(!ret);
-		}
-		osd_thread_params *args = malloc(sizeof *args);
-        args->fd = drm_fd;
-        args->output_list = output_list;
-		ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, args);
+	if (osd_vars.enable && enable_mavlink) {
+		ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, &signal_flag);
 		assert(!ret);
 	}
 
@@ -577,28 +629,14 @@ int main(int argc, char **argv)
 
 	ret = pthread_join(tid_frame, NULL);
 	assert(!ret);
-	
-	ret = pthread_mutex_lock(&video_mutex);
-	assert(!ret);	
-	ret = pthread_cond_signal(&video_cond);
-	assert(!ret);	
-	ret = pthread_mutex_unlock(&video_mutex);
-	assert(!ret);	
 
-	ret = pthread_join(tid_display, NULL);
-	assert(!ret);	
-	
-	ret = pthread_cond_destroy(&video_cond);
-	assert(!ret);
-	ret = pthread_mutex_destroy(&video_mutex);
-	assert(!ret);
+	if (tid_display > 0) {
+		ret = pthread_join(tid_display, NULL);
+		assert(!ret);
+	}	
 
 	if (enable_mavlink) {
 		ret = pthread_join(tid_mavlink, NULL);
-		assert(!ret);
-	}
-	if (enable_osd) {
-		ret = pthread_join(tid_osd, NULL);
 		assert(!ret);
 	}
 
@@ -627,19 +665,18 @@ int main(int argc, char **argv)
 	free(nal_buffer);
 	
 	////////////////////////////////////////////// DRM CLEANUP
-	restore_planes_zpos(drm_fd, output_list);
+	restore_planes_zpos(drm_fd, output);
 	drmModeSetCrtc(drm_fd,
-			       output_list->saved_crtc->crtc_id,
-			       output_list->saved_crtc->buffer_id,
-			       output_list->saved_crtc->x,
-			       output_list->saved_crtc->y,
-			       &output_list->connector.id,
+			       output->saved_crtc->crtc_id,
+			       output->saved_crtc->buffer_id,
+			       output->saved_crtc->x,
+			       output->saved_crtc->y,
+			       &output->connector.id,
 			       1,
-			       &output_list->saved_crtc->mode);
-	drmModeFreeCrtc(output_list->saved_crtc);
-	drmModeAtomicFree(output_list->video_request);
-	drmModeAtomicFree(output_list->osd_request);
-	modeset_cleanup(drm_fd, output_list);
+			       &output->saved_crtc->mode);
+	drmModeFreeCrtc(output->saved_crtc);
+	drmModeAtomicFree(output->request);
+	modeset_cleanup(drm_fd, output);
 	close(drm_fd);
 
 	return 0;
