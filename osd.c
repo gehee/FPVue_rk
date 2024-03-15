@@ -14,35 +14,6 @@
 
 struct osd_vars osd_vars;
 
-int modeset_perform_modeset_osd(int fd, struct modeset_output *output_list)
-{
-	int ret, flags;
-	struct drm_object *plane = &output_list->osd_plane;
-	struct modeset_buf *buf = &output_list->osd_bufs[output_list->osd_buf_switch ^ 1];
-
-	ret = modeset_atomic_prepare_commit(fd, output_list, output_list->osd_request, plane, buf->fb, buf->width, buf->height, 2 /* zpos*/);
-	if (ret < 0) {
-		fprintf(stderr, "prepare atomic commit failed for osd plane %d: %m\n", plane->id);
-		return ret;
-	}
-
-	/* perform test-only atomic commit */
-	flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
-	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
-	if (ret < 0) {
-		fprintf(stderr, "test-only atomic commit failed for osd plane %d: %m\n", plane->id);
-		return ret;
-	}
-
-	/* initial modeset on all outputs */
-	flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
-	ret = drmModeAtomicCommit(fd, output_list->osd_request, flags, NULL);
-	if (ret < 0)
-		fprintf(stderr, "modeset atomic commit failed for osd plane %d: %m\n", plane->id);
-
-	return ret;
-}
-
 void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *out, 
 	cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon) {
     
@@ -55,6 +26,8 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	cairo_t* cr;
 	cairo_surface_t *surface;
 	buf = &out->osd_bufs[out->osd_buf_switch ^ 1];
+
+	// TODO(gehee) This takes forever.
 	for (j = 0; j < buf->height; ++j) {
 	    for (k = 0; k < buf->width; ++k) {
 	        off = buf->stride * j + k * 4;
@@ -200,7 +173,10 @@ void *__OSD_THREAD__(void *param) {
 	cairo_surface_t *fps_icon = surface_from_embedded_png(framerate_icon, framerate_icon_length);
 	cairo_surface_t *lat_icon = surface_from_embedded_png(latency_icon, latency_icon_length);
 	cairo_surface_t* net_icon = surface_from_embedded_png(bandwidth_icon, bandwidth_icon_length);
-	modeset_perform_modeset_osd(p->fd, p->output_list);
+
+	struct modeset_buf *buf = &p->output_list->osd_bufs[p->output_list->osd_buf_switch ^ 1];
+	int ret = modeset_perform_modeset(p->fd, p->output_list, p->output_list->osd_request, &p->output_list->osd_plane, buf->fb, buf->width, buf->height, osd_vars.plane_zpos);
+	assert(ret >= 0);
 	while(!osd_thread_signal) {
 		modeset_draw_osd(p->fd, &p->output_list->osd_plane, p->output_list, fps_icon, lat_icon, net_icon);
 		usleep(1000000);

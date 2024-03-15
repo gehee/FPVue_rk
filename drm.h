@@ -104,6 +104,8 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 
 int modeset_prepare(int fd, struct modeset_output *output_list);
 
+int modeset_perform_modeset(int fd, struct modeset_output *out, drmModeAtomicReq * req, struct drm_object *plane, int fb_id, int width, int height, int zpos);
+
 int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, int fb_id, int width, int height, int zpos);
 
 void restore_planes_zpos(int fd, struct modeset_output *output_list);

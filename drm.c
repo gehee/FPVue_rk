@@ -467,7 +467,7 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 		fprintf(stderr, "no valid osd plane with format ARGB8888 for crtc %u\n", out->crtc.id);
 		goto out_blob;
 	}
-	fprintf(stdout, "Using plane %d (NV12) for OSD\n",  out->osd_plane.id);
+	fprintf(stdout, "Using plane %d (ARGB8888) for OSD\n",  out->osd_plane.id);
 
 	ret = modeset_setup_objects(fd, out);
 	if (ret) {
@@ -535,6 +535,33 @@ int modeset_prepare(int fd, struct modeset_output *output_list)
 
 	drmModeFreeResources(res);
 	return 0;
+}
+
+int modeset_perform_modeset(int fd, struct modeset_output *out, drmModeAtomicReq * req, struct drm_object *plane, int fb_id, int width, int height, int zpos)
+{
+	int ret, flags;
+
+	ret = modeset_atomic_prepare_commit(fd, out, req, plane, fb_id, width, height, zpos);
+	if (ret < 0) {
+		fprintf(stderr, "prepare atomic commit failed for plane %d: %m\n", plane->id);
+		return ret;
+	}
+
+	/* perform test-only atomic commit */
+	flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET;
+	ret = drmModeAtomicCommit(fd, req, flags, NULL);
+	if (ret < 0) {
+		fprintf(stderr, "test-only atomic commit failed for plane %d: %m\n", plane->id);
+		return ret;
+	}
+
+	/* initial modeset on all outputs */
+	flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
+	ret = drmModeAtomicCommit(fd, req, flags, NULL);
+	if (ret < 0)
+		fprintf(stderr, "modeset atomic commit failed for plane %d: %m\n", plane->id);
+
+	return ret;
 }
 
 

@@ -6,6 +6,8 @@
 
 // OSD Vars
 struct osd_vars {
+    int plane_zpos;
+
 	// Video Decoder
     bool enable_video;
 	int current_framerate;

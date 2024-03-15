@@ -76,6 +76,7 @@ struct video_stats {
 struct video_stats osd_stats;
 int bw_curr = 0;
 long long bw_stats[10];
+int video_zpos = 1;
 
 
 // __FRAME_THREAD__
@@ -181,12 +182,8 @@ void *__FRAME_THREAD__(void *param)
 				ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_EXT_BUF_GROUP, mpi.frm_grp);
 				ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_INFO_CHANGE_READY, NULL);
 
-				drmModeAtomicSetCursor(output_list->video_request, 0);
-				ret = modeset_atomic_prepare_commit(drm_fd, output_list, output_list->video_request, &output_list->video_plane, 
-					mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, 1 /*zpos*/);
+				ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos);
 				assert(ret >= 0);
-				ret = drmModeAtomicCommit(drm_fd, output_list->video_request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
-				assert(!ret);
 
 			} else {
 				// regular frame received
@@ -470,6 +467,7 @@ int main(int argc, char **argv)
 
 	__OnArgument("--osd") {
 		enable_osd = 1;
+		osd_vars.plane_zpos = 2;
 		char* elements = __ArgValue;
 		if (!strcmp(elements, "")) {
 			osd_vars.enable_video = 1;
@@ -502,6 +500,10 @@ int main(int argc, char **argv)
 	}
 
 	__EndParseConsoleArguments__
+
+	if (enable_osd == 0 ) {
+		video_zpos = 4;
+	}
 		
 	MppCodingType mpp_type = MPP_VIDEO_CodingHEVC;
 	ret = mpp_check_support_format(MPP_CTX_DEC, mpp_type);
