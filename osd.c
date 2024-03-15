@@ -25,7 +25,7 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	char time_left[5];
 	cairo_t* cr;
 	cairo_surface_t *surface;
-	buf = &out->osd_bufs[out->osd_buf_switch ^ 1];
+	buf = &out->osd_bufs[out->osd_buf_curr];
 
 	// TODO(gehee) This takes forever.
 	for (j = 0; j < buf->height; ++j) {
@@ -125,7 +125,7 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	int ret;
 	drmModeAtomicReq *req = out->osd_request;
 	drmModeAtomicSetCursor(req, 0);
-	int fb = out->osd_bufs[out->osd_buf_switch ^ 1].fb;
+	int fb = out->osd_bufs[out->osd_buf_curr].fb;
   	ret = set_drm_object_property(req, plane, "FB_ID", fb);
 	assert(ret>0);
 	ret = drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_NONBLOCK, NULL);
@@ -135,7 +135,7 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	// printf("osd drawn in %.2f ms\n", time_us/1000.0);			
 
 	// Switch buffer at each draw call
-	out->osd_buf_switch ^= 1;
+	out->osd_buf_curr = (out->osd_buf_curr+1) % OSD_BUF_COUNT;
 }
 
 int osd_thread_signal;
@@ -174,7 +174,7 @@ void *__OSD_THREAD__(void *param) {
 	cairo_surface_t *lat_icon = surface_from_embedded_png(latency_icon, latency_icon_length);
 	cairo_surface_t* net_icon = surface_from_embedded_png(bandwidth_icon, bandwidth_icon_length);
 
-	struct modeset_buf *buf = &p->output_list->osd_bufs[p->output_list->osd_buf_switch ^ 1];
+	struct modeset_buf *buf = &p->output_list->osd_bufs[0];
 	int ret = modeset_perform_modeset(p->fd, p->output_list, p->output_list->osd_request, &p->output_list->osd_plane, buf->fb, buf->width, buf->height, osd_vars.plane_zpos);
 	assert(ret >= 0);
 	while(!osd_thread_signal) {

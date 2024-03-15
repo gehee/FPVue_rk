@@ -387,25 +387,18 @@ void modeset_destroy_fb(int fd, struct modeset_buf *buf)
 }
 
 
-int modeset_setup_framebuffers(int fd, drmModeConnector *conn,
-				      struct modeset_output *out)
+int modeset_setup_framebuffers(int fd, drmModeConnector *conn, struct modeset_output *out)
 {
-	out->osd_bufs[0].width = conn->modes[0].hdisplay;
-	out->osd_bufs[0].height = conn->modes[0].vdisplay;
-	out->osd_bufs[1].width = out->osd_bufs[0].width;
-	out->osd_bufs[1].height = out->osd_bufs[0].height;
-	int ret = modeset_create_fb(fd, &out->osd_bufs[0]);
-	if (ret) {
-		return ret;
+	for (int i=0; i<OSD_BUF_COUNT; i++) {
+		out->osd_bufs[i].width = conn->modes[0].hdisplay;
+		out->osd_bufs[i].height = conn->modes[0].vdisplay;
+		int ret = modeset_create_fb(fd, &out->osd_bufs[i]);
+		if (ret) {
+			return ret;
+		}
 	}
-	ret = modeset_create_fb(fd, &out->osd_bufs[1]);
-	if (ret) {
-		return ret;
-	}
-
 	out->video_crtc_width = conn->modes[0].hdisplay;
 	out->video_crtc_height = conn->modes[0].vdisplay;
-
 	return 0;
 }
 
@@ -414,12 +407,12 @@ void modeset_output_destroy(int fd, struct modeset_output *out)
 {
 	modeset_destroy_objects(fd, out);
 
-	modeset_destroy_fb(fd, &out->osd_bufs[0]);
-	modeset_destroy_fb(fd, &out->osd_bufs[1]);
+	for (int i=0; i<OSD_BUF_COUNT; i++) { 
+		modeset_destroy_fb(fd, &out->osd_bufs[i]);
+	}
 	drmModeDestroyPropertyBlob(fd, out->mode_blob_id);
 	free(out);
 }
-
 
 struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn)
 {
@@ -611,7 +604,7 @@ int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAto
 void restore_planes_zpos(int fd, struct modeset_output *output_list) {
 	// restore osd zpos
 	int ret, flags;
-	struct modeset_buf *buf = &output_list->osd_bufs[output_list->osd_buf_switch ^ 1];
+	struct modeset_buf *buf = &output_list->osd_bufs[0];
 
 	// TODO(geehe) Find a more elegant way to do this.
 	int64_t zpos = get_property_value(fd, output_list->osd_plane.props, "zpos");

@@ -25,6 +25,8 @@
 #include <rockchip/rk_mpi.h>
 #include <assert.h>
 
+#define OSD_BUF_COUNT	12
+
 struct drm_object {
 	drmModeObjectProperties *props;
 	drmModePropertyRes **props_info;
@@ -54,8 +56,8 @@ struct modeset_output {
 
 	// OSD variables
 	drmModeAtomicReq *osd_request;
-	unsigned int osd_buf_switch;
-	struct modeset_buf osd_bufs[2];
+	unsigned int osd_buf_curr;
+	struct modeset_buf osd_bufs[OSD_BUF_COUNT];
 	struct drm_object osd_plane;
 
 	// Video variables
