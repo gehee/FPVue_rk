@@ -93,6 +93,7 @@ uint64_t latency_avg[200];
 uint64_t min_latency = 1844674407370955161; // almost MAX_uint64_t
 uint64_t max_latency = 0;
 struct timespec osd_vars_start, osd_vars_end;
+struct timespec osd_draw_start, osd_draw_end;
 
 static void modeset_page_flip_event(int fd, unsigned int frame,
 				    unsigned int sec, unsigned int usec,
@@ -138,11 +139,16 @@ static void modeset_page_flip_event(int fd, unsigned int frame,
 	// Render OSD
 	int osd_fb = output->osd_bufs[output->osd_buf_switch ^ 1].fb;
 	if (osd_vars.enable) {
+		clock_gettime(CLOCK_MONOTONIC, &osd_draw_start);
 		modeset_paint_framebuffer(output);
 		if (osd_fb!=last_osd_fb) {
 			ret = set_drm_object_property(req, &output->osd_plane, "FB_ID", osd_fb);
 			assert(ret>0);
 		}
+		clock_gettime(CLOCK_MONOTONIC, &osd_draw_end);
+		uint64_t time_us=(osd_draw_end.tv_sec - osd_draw_start.tv_sec)*1000000ll + ((osd_draw_end.tv_nsec - osd_draw_start.tv_nsec)/1000ll) % 1000000ll;
+		printf("modeset_paint_framebuffer=%.2f ms\n", time_us/1000.0);	
+			
 	}
 
 	ret = set_drm_object_property(req, &output->video_plane, "FB_ID", output->video_cur_fb_id);

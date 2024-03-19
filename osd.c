@@ -102,7 +102,7 @@ void modeset_paint_framebuffer(struct modeset_output *out) {
 	if (time_us<=1000000) { // refresh every 1000ms
 		return;
 	}
-	cairo_set_source_rgba(cr, 0, 0, 0, 1); // R, G, B, A
+	cairo_set_source_rgba(cr, 0, 0, 0, 0.4); // R, G, B, A
 	cairo_rectangle(cr, osd_x, 0, 300, stats_height); 
 	cairo_fill(cr);
 	cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
