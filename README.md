@@ -10,33 +10,43 @@ Tested on RK3566 (Radxa Zero 3W) and RK3588s (Orange Pi 5).
 Build on the Rockchip linux system directly.
 
 ## Install dependencies
+
 - rockchip_mpp
+
 ```
 git clone https://github.com/rockchip-linux/mpp.git
-cmake CMakeLists.txt
-make
-sudo make install
+sudo cmake --build build --target install
 ```
-- drm, cairo 
+
+- drm, cairo
+
 ```
 sudo apt install libdrm-dev libcairo-dev
 ```
 
 ## Build Instructions
-```
-cmake CMakeLists.txt
-make
-```
 
-### Run
+Build and run application in production environment:
 
 ```
+cmake -B build
+sudo cmake --build build --target install
+fpvue
+```
+
+Build and run application for debugging purposes:
+
+```
+cmake -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
 ./fpvue
 ```
 
+### Usage
+
 Show command line options:
 ```
-./fpvue --help
+fpvue --help
 ```
 
 ### Known issues
