@@ -318,6 +318,7 @@ void sig_handler(int signum)
 	osd_thread_signal++;
 }
 
+int mpp_split_mode = 0;
 
 int enable_dvr = 0;
 char * dvr_file;
@@ -437,11 +438,13 @@ void printHelp() {
     "    fpvue [Arguments]\n"
     "\n"
     "  Arguments:\n"
-    "    -p [Port]      - Listen port                            (Default: 5600)\n"
+    "    -p [Port]         - Listen port                            (Default: 5600)\n"
     "\n"
-    "    --osd          - Enable OSD and specifies its element   (Default: video,wfbng)\n"
+    "    --mpp-split-mode  - Enable rockchip MPP_DEC_SET_PARSER_SPLIT_MODE, required when the video stream uses slices\n"
     "\n"
-    "    --dvr          - Save the video feed (no osd) to the provided filename\n"
+    "    --osd             - Enable OSD and specifies its element   (Default: video,wfbng)\n"
+    "\n"
+    "    --dvr             - Save the video feed (no osd) to the provided filename\n"
     "\n", __DATE__
   );
 }
@@ -456,7 +459,6 @@ int main(int argc, char **argv)
 	int enable_mavlink = 0;
 	uint16_t listen_port = 5600;
 	uint16_t mavlink_port = 14550;
-
 	// Load console arguments
 	__BeginParseConsoleArguments__(printHelp) 
 	
@@ -468,6 +470,7 @@ int main(int argc, char **argv)
 	__OnArgument("--osd") {
 		enable_osd = 1;
 		osd_vars.plane_zpos = 2;
+		osd_vars.enable_latency = mpp_split_mode == 1 ? 0 : 1;
 		char* elements = __ArgValue;
 		if (!strcmp(elements, "")) {
 			osd_vars.enable_video = 1;
@@ -496,6 +499,12 @@ int main(int argc, char **argv)
 	__OnArgument("--dvr") {
 		enable_dvr = 1;
 		dvr_file = __ArgValue;
+		continue;
+	}
+
+	__OnArgument("--mpp-split-mode") {
+		mpp_split_mode = 1;
+		osd_vars.enable_latency = 0;
 		continue;
 	}
 
@@ -537,6 +546,9 @@ int main(int argc, char **argv)
 	assert(!ret);
 
 	ret = mpp_create(&mpi.ctx, &mpi.mpi);
+	assert(!ret);
+
+	ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_PARSER_SPLIT_MODE, &mpp_split_mode);
 	assert(!ret);
 
 	ret = mpp_init(mpi.ctx, MPP_CTX_DEC, mpp_type);

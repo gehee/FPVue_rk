@@ -11,6 +11,7 @@ struct osd_vars {
 	// Video Decoder
     bool enable_video;
 	int current_framerate;
+    bool enable_latency;
 	uint64_t latency_avg;
 	uint64_t latency_max;
 	uint64_t latency_min;

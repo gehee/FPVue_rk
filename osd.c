@@ -21,8 +21,7 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	// clock_gettime(CLOCK_MONOTONIC, &draw_start);
 
 	struct modeset_buf *buf;
-	unsigned int j,k,off,random;
-	char time_left[5];
+	unsigned int j,k,off;
 	cairo_t* cr;
 	cairo_surface_t *surface;
 	buf = &out->osd_bufs[out->osd_buf_curr];
@@ -48,8 +47,11 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 	int stats_height = 30;
 	int row_count = 0;
 	if (osd_vars.enable_video) {
-		stats_height+=stats_row_height*3;
-	} 
+		stats_height+=stats_row_height*2;
+		if (osd_vars.enable_latency) {
+			stats_height+=stats_row_height;
+		}
+	}
 	if (osd_vars.enable_wfbng) {
 		stats_height+=stats_row_height;
 	} 
@@ -69,13 +71,15 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 		sprintf(str, "%d fps | %dx%d", osd_vars.current_framerate, osd_vars.video_width, osd_vars.video_height);
 		cairo_show_text (cr, str);
 
-		row_count++;
-		cairo_set_source_surface (cr, lat_icon, osd_x+22, stats_top_margin+row_count*stats_row_height-19);
-		cairo_paint (cr);
-		cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
-		cairo_move_to (cr,osd_x+60, stats_top_margin+stats_row_height*2);
-		sprintf(str, "%.2f ms (%.2f, %.2f)", osd_vars.latency_avg/1000.0, osd_vars.latency_min/1000.0, osd_vars.latency_max/1000.0);
-		cairo_show_text (cr, str);
+		if (osd_vars.enable_latency) {
+			row_count++;
+			cairo_set_source_surface (cr, lat_icon, osd_x+22, stats_top_margin+row_count*stats_row_height-19);
+			cairo_paint (cr);
+			cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
+			cairo_move_to (cr,osd_x+60, stats_top_margin+stats_row_height*2);
+			sprintf(str, "%.2f ms (%.2f, %.2f)", osd_vars.latency_avg/1000.0, osd_vars.latency_min/1000.0, osd_vars.latency_max/1000.0);
+			cairo_show_text (cr, str);
+		}
 		
 		// Video Link Elements
 		double avg_bw = 0;
@@ -181,6 +185,5 @@ void *__OSD_THREAD__(void *param) {
 		modeset_draw_osd(p->fd, &p->output_list->osd_plane, p->output_list, fps_icon, lat_icon, net_icon);
 		usleep(1000000);
     }
-	// TODO(gehee) This code is never reached.
 	printf("OSD thread done.\n");
 }
