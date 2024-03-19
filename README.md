@@ -39,7 +39,7 @@ Build and run application for debugging purposes:
 ```
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-./fpvue
+build/fpvue --osd
 ```
 
 ### Usage
