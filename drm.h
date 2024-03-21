@@ -102,9 +102,9 @@ int modeset_setup_framebuffers(int fd, drmModeConnector *conn, struct modeset_ou
 
 void modeset_output_destroy(int fd, struct modeset_output *out);
 
-struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn);
+struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh);
 
-int modeset_prepare(int fd, struct modeset_output *output_list);
+int modeset_prepare(int fd, struct modeset_output *output_list, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh);
 
 int modeset_perform_modeset(int fd, struct modeset_output *out, drmModeAtomicReq * req, struct drm_object *plane, int fb_id, int width, int height, int zpos);
 

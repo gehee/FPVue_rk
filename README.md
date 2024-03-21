@@ -51,4 +51,5 @@ fpvue --help
 
 ### Known issues
 
+1. Video might not be displayed properly when screen mode is specified.
 1. Crashes when video feed resolution is higher than the screen resolution.

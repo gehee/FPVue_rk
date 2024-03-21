@@ -456,6 +456,8 @@ void printHelp() {
     "    --dvr             	- Save the video feed (no osd) to the provided filename\n"
     "\n"
     "    --mpp-split-mode  	- Enable rockchip MPP_DEC_SET_PARSER_SPLIT_MODE, required when the video stream uses slices\n"
+    "\n"
+    "    --screen-mode      - Override default screen mode. ex:1920x1080@120\n"
     "\n", __DATE__
   );
 }
@@ -470,6 +472,9 @@ int main(int argc, char **argv)
 	int enable_mavlink = 0;
 	uint16_t listen_port = 5600;
 	uint16_t mavlink_port = 14550;
+	uint16_t mode_width = 0;
+	uint16_t mode_height = 0;
+	uint32_t mode_vrefresh = 0;
 	// Load console arguments
 	__BeginParseConsoleArguments__(printHelp) 
 	
@@ -529,6 +534,14 @@ int main(int argc, char **argv)
 		osd_vars.enable_latency = 0;
 		continue;
 	}
+	
+	__OnArgument("--screen-mode") {
+		char* mode = __ArgValue;
+		mode_width = atoi(strtok(mode, "x"));
+		mode_height = atoi(strtok(NULL, "@"));
+		mode_vrefresh = atoi(strtok(NULL, "@"));
+		continue;
+	}
 
 	__EndParseConsoleArguments__
 
@@ -551,9 +564,8 @@ int main(int argc, char **argv)
 		printf("modeset_open() =  %d\n", ret);
 	}
 	assert(drm_fd >= 0);
-
 	output_list = (struct modeset_output *)malloc(sizeof(struct modeset_output));
-	ret = modeset_prepare(drm_fd, output_list);
+	ret = modeset_prepare(drm_fd, output_list, mode_width, mode_height, mode_vrefresh);
 	assert(!ret);
 	
 	////////////////////////////////// MPI SETUP

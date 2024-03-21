@@ -414,7 +414,7 @@ void modeset_output_destroy(int fd, struct modeset_output *out)
 	free(out);
 }
 
-struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn)
+struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeConnector *conn, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
 {
 	int ret;
 	struct modeset_output *out;
@@ -435,9 +435,27 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 		goto out_error;
 	}
 
-	memcpy(&out->mode, &conn->modes[0], sizeof(out->mode));
-	if (drmModeCreatePropertyBlob(fd, &out->mode, sizeof(out->mode),
-	                              &out->mode_blob_id) != 0) {
+	int fc = 0;
+	if (mode_width>0 && mode_height>0 && mode_vrefresh>0) {
+		fc = -1;
+		printf( "Available modes:\n");
+		for (int i = 0; i < conn->count_modes; i++ ) {
+			printf( "%d : %dx%d@%d\n",i, conn->modes[i].hdisplay, conn->modes[i].vdisplay , conn->modes[i].vrefresh );
+			if (conn->modes[i].hdisplay == mode_width &&
+			conn->modes[i].vdisplay == mode_height &&
+			conn->modes[i].vrefresh == mode_vrefresh
+			) {
+				fc = i;
+			}
+		}
+		if (fc < 0) {
+			fprintf(stderr, "couldn't find a matching mode for %dx%d@%d\n", mode_width , mode_height , mode_vrefresh);
+			goto out_error;
+		} 
+		printf( "Using screen mode %dx%d@%d\n",conn->modes[fc].hdisplay, conn->modes[fc].vdisplay , conn->modes[fc].vrefresh );
+	}
+	memcpy(&out->mode, &conn->modes[fc], sizeof(out->mode));
+	if (drmModeCreatePropertyBlob(fd, &out->mode, sizeof(out->mode), &out->mode_blob_id) != 0) {
 		fprintf(stderr, "couldn't create a blob property\n");
 		goto out_error;
 	}
@@ -492,7 +510,7 @@ out_error:
 }
 
 
-int modeset_prepare(int fd, struct modeset_output *output_list)
+int modeset_prepare(int fd, struct modeset_output *output_list, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh)
 {
 	drmModeRes *res;
 	drmModeConnector *conn;
@@ -514,7 +532,7 @@ int modeset_prepare(int fd, struct modeset_output *output_list)
 			continue;
 		}
 
-		out = modeset_output_create(fd, res, conn);
+		out = modeset_output_create(fd, res, conn, mode_width, mode_height, mode_vrefresh);
 		drmModeFreeConnector(conn);
 		if (!out)
 			continue;
