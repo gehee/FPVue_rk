@@ -565,12 +565,12 @@ int modeset_perform_modeset(int fd, struct modeset_output *out)
 int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, struct drm_object *plane, int fb_id, int width, int height, int zpos)
 {
 	drmModeAtomicReq *req = out->request;
-	// if (set_drm_object_property(req, &out->connector, "CRTC_ID", out->crtc.id) < 0)
-	// 	return -1;
-	// if (set_drm_object_property(req, &out->crtc, "MODE_ID", out->mode_blob_id) < 0)
-	// 	return -1;
-	// if (set_drm_object_property(req, &out->crtc, "ACTIVE", 1) < 0)
-	// 	return -1;
+	if (set_drm_object_property(req, &out->connector, "CRTC_ID", out->crtc.id) < 0)
+		return -1;
+	if (set_drm_object_property(req, &out->crtc, "MODE_ID", out->mode_blob_id) < 0)
+		return -1;
+	if (set_drm_object_property(req, &out->crtc, "ACTIVE", 1) < 0)
+		return -1;
 	if (set_drm_object_property(req, plane, "FB_ID", fb_id) < 0)
 		return -1;
 	if (set_drm_object_property(req, plane, "CRTC_ID", out->crtc.id) < 0)

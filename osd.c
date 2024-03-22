@@ -47,24 +47,22 @@ cairo_surface_t *fps_icon;
 cairo_surface_t *lat_icon;
 cairo_surface_t* net_icon;
 
-int osd_vblank_count = 0;
-struct timespec last_osd_refresh;
 
 void modeset_paint_framebuffer(struct modeset_output *out) {
-	osd_vblank_count++;
 	unsigned int j,k,off;
 	cairo_t* cr;
 	cairo_surface_t *surface;
 
-	struct modeset_buf *buf = &out->osd_bufs[out->osd_buf_curr];
+	int write_buf_idx = (out->osd_buf_switch+1) % OSD_BUF_COUNT;
+	struct modeset_buf *buf = &out->osd_bufs[write_buf_idx];
 
 	// TODO(gehee) This is super slow; re-enable with alpha.
-	// for (j = 0; j < buf->height; ++j) {
-	//     for (k = 0; k < buf->width; ++k) {
-	//         off = buf->stride * j + k * 4;
-	//         *(uint32_t*)&buf->map[off] = (0 << 24) | (0 << 16) | (0 << 8) | 0;
-	//     }
-	// }
+	for (j = 0; j < buf->height; ++j) {
+	    for (k = 0; k < buf->width; ++k) {
+	        off = buf->stride * j + k * 4;
+	        *(uint32_t*)&buf->map[off] = (0 << 24) | (0 << 16) | (0 << 8) | 0;
+	    }
+	}
 
 	surface = cairo_image_surface_create_for_data(buf->map, CAIRO_FORMAT_ARGB32, buf->width, buf->height, buf->stride);
 	cr = cairo_create (surface);
@@ -90,20 +88,20 @@ void modeset_paint_framebuffer(struct modeset_output *out) {
 		cairo_rectangle(cr, osd_x, 0, 1000, 300); 
 		cairo_fill(cr);
 		char str[80];
-		sprintf(str, "%d", osd_vblank_count);
+		//sprintf(str, "%d", osd_vblank_count);
 		cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
 		cairo_move_to(cr, osd_x + 20, 200);
 		cairo_show_text(cr, str);
-		out->osd_buf_curr = (out->osd_buf_curr+1) % OSD_BUF_COUNT;
+		out->osd_buf_switch = write_buf_idx;
 		return;
 	}
 
-	struct timespec curr_time;
-	clock_gettime(CLOCK_MONOTONIC, &curr_time);
-	uint64_t time_us=(curr_time.tv_sec - last_osd_refresh.tv_sec)*1000000ll + ((curr_time.tv_nsec - last_osd_refresh.tv_nsec)/1000ll) % 1000000ll;
-	if (time_us<=1000000) { // refresh every 1000ms
-		return;
-	}
+	// struct timespec curr_time;
+	// clock_gettime(CLOCK_MONOTONIC, &curr_time);
+	// uint64_t time_us=(curr_time.tv_sec - last_osd_refresh.tv_sec)*1000000ll + ((curr_time.tv_nsec - last_osd_refresh.tv_nsec)/1000ll) % 1000000ll;
+	// if (time_us<=1000000) { // refresh every 1000ms
+	// 	return;
+	// }
 	cairo_set_source_rgba(cr, 0, 0, 0, 0.4); // R, G, B, A
 	cairo_rectangle(cr, osd_x, 0, 300, stats_height); 
 	cairo_fill(cr);
@@ -171,10 +169,9 @@ void modeset_paint_framebuffer(struct modeset_output *out) {
 		cairo_move_to(cr, osd_x+25, stats_top_margin+stats_row_height*row_count);
 		cairo_show_text(cr, msg);
 	}
-	last_osd_refresh = curr_time;
 
 	// Switch buffer at each draw call
-	out->osd_buf_curr = (out->osd_buf_curr+1) % OSD_BUF_COUNT;
+	out->osd_buf_switch = write_buf_idx;
 }
 
 void init_icons() {

@@ -89,8 +89,6 @@ int last_video_fb = 0;
 
 int displayed_frames = 0;
 uint64_t latency_avg[200];
-uint64_t min_latency = 1844674407370955161; // almost MAX_uint64_t
-uint64_t max_latency = 0;
 struct timespec osd_vars_start, osd_vars_end;
 
 static void modeset_page_flip_event(int fd, unsigned int frame,
@@ -102,46 +100,38 @@ static void modeset_page_flip_event(int fd, unsigned int frame,
 
 	// Update OSD vars
 	if (last_video_fb != output->video_cur_fb_id) {
-		printf("updating osd vars\n");
+		//printf("updating osd vars\n");
 		displayed_frames++;
 		clock_gettime(CLOCK_MONOTONIC, &osd_vars_end);
 		uint64_t time_us = (osd_vars_end.tv_sec - osd_vars_start.tv_sec)*1000000ll + ((osd_vars_end.tv_nsec - osd_vars_start.tv_nsec)/1000ll) % 1000000ll;
 		if (time_us >= 1000000) {
-			// uint64_t sum = 0;
-			// for (int i = 0; i < displayed_frames; ++i) {
-			// 	sum += latency_avg[i];
-			// 	if (latency_avg[i] > max_latency) {
-			// 		max_latency = latency_avg[i];
-			// 	}
-			// 	if (latency_avg[i] < min_latency) {
-			// 		min_latency = latency_avg[i];
-			// 	}
-			// }
-		// 	osd_vars.latency_avg = sum / (displayed_frames);
-		// 	osd_vars.latency_max = max_latency;
-		// 	osd_vars.latency_min = min_latency;
+			uint64_t sum = 0;
+			for (int i = 0; i < displayed_frames; ++i) {
+				sum += latency_avg[i];
+			}
+			osd_vars.latency_avg = sum / (displayed_frames);
+			osd_vars.current_framerate = displayed_frames;
 
-		// 	//printf("display latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, displayed_frames);	
+		 	//printf("display latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, displayed_frames);	
 			
 			osd_vars_start = osd_vars_end;
 			displayed_frames = 0;
-			max_latency = 0;
-			min_latency = 1844674407370955161;
+			osd_vars.latency_max = 0;
+			osd_vars.latency_min = 1844674407370955161;
 		}
 		struct timespec rtime = frame_stats_byfd[output->video_cur_fb_id];
-		printf("osd_vars_end %d\n", osd_vars_end.tv_sec);
-		printf("osd_vars_end %d\n", osd_vars_end.tv_nsec);
-		printf("rtime %d\n", rtime.tv_sec);
-		printf("rtime %d\n", rtime.tv_nsec);
 		uint64_t ltc = (osd_vars_end.tv_sec - rtime.tv_sec)*1000000ll + ((osd_vars_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
-		printf("ltc %d\n", ltc);
-		printf("displayed_frames %d\n", displayed_frames);
-		//latency_avg[displayed_frames] = ltc;
+		if(ltc < osd_vars.latency_min ){
+			osd_vars.latency_min = ltc;
+		}if(ltc > osd_vars.latency_max ){
+			osd_vars.latency_max = ltc;
+		}
+		latency_avg[displayed_frames] = ltc;
 	}
 
 	drmModeAtomicSetCursor(output->request, 0);
 	if (osd_vars.enable) {
-		int osd_fb = output->osd_bufs[output->osd_buf_curr].fb;
+		int osd_fb = output->osd_bufs[output->osd_buf_switch].fb;
 		ret = set_drm_object_property(output->request, &output->osd_plane, "FB_ID", osd_fb);
 		assert(ret>0);	
 	}
@@ -355,29 +345,29 @@ void *__FRAME_THREAD__(void *param)
 					frame_stats_byfd[output->video_cur_fb_id] = frame_stats[output->video_poc];
 					decoded_frame++;
 
-					clock_gettime(CLOCK_MONOTONIC, &fps_end);
-					uint64_t time_us=(fps_end.tv_sec - fps_start.tv_sec)*1000000ll + ((fps_end.tv_nsec - fps_start.tv_nsec)/1000ll) % 1000000ll;
-					if (time_us >= 1000000) {
-						uint64_t sum = 0;
-						for (int i = 0; i < decoded_frame; ++i) {
-							sum += latency_avg[i];
-							if (latency_avg[i] > max_latency) {
-								max_latency = latency_avg[i];
-							}
-							if (latency_avg[i] < min_latency) {
-								min_latency = latency_avg[i];
-							}
-						}
-						//printf("decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", (sum / (decoded_frame))/1000.0, max_latency/1000.0, min_latency/1000.0, decoded_frame);	
+					// clock_gettime(CLOCK_MONOTONIC, &fps_end);
+					// uint64_t time_us=(fps_end.tv_sec - fps_start.tv_sec)*1000000ll + ((fps_end.tv_nsec - fps_start.tv_nsec)/1000ll) % 1000000ll;
+					// if (time_us >= 1000000) {
+					// 	uint64_t sum = 0;
+					// 	for (int i = 0; i < decoded_frame; ++i) {
+					// 		sum += latency_avg[i];
+					// 		if (latency_avg[i] > max_latency) {
+					// 			max_latency = latency_avg[i];
+					// 		}
+					// 		if (latency_avg[i] < min_latency) {
+					// 			min_latency = latency_avg[i];
+					// 		}
+					// 	}
+					// 	//printf("decoding latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", (sum / (decoded_frame))/1000.0, max_latency/1000.0, min_latency/1000.0, decoded_frame);	
 
-						fps_start = fps_end;
-						osd_vars.current_framerate = decoded_frame;
-						decoded_frame = 0;
-						max_latency = 0;
-						min_latency = 1844674407370955161;
-					}
-					struct timespec rtime = frame_stats[output->video_poc];
-					latency_avg[decoded_frame] = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
+					// 	fps_start = fps_end;
+					// 	osd_vars.current_framerate = decoded_frame;
+					// 	decoded_frame = 0;
+					// 	max_latency = 0;
+					// 	min_latency = 1844674407370955161;
+					// }
+					// struct timespec rtime = frame_stats[output->video_poc];
+					// latency_avg[decoded_frame] = (fps_end.tv_sec - rtime.tv_sec)*1000000ll + ((fps_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
 				}
 			}
 			
@@ -619,7 +609,7 @@ int main(int argc, char **argv)
 	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 	assert(!ret);
 	if (osd_vars.enable) {
-		ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, &output);
+		ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, output);
 		assert(!ret);
 	}
 	if (osd_vars.enable && enable_mavlink) {
