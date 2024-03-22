@@ -1,7 +1,7 @@
 # FPVue_rk
 
 WFB-ng client (Video Decoder) for Rockchip platform powered by the [Rockchip MPP library](https://github.com/rockchip-linux/mpp).
-It also displays a simple cairo based OSD that shows the bandwidth, decoding latency, and framerate of the decoded video.
+It also displays a simple cairo based OSD that shows the bandwidth, decoding latency, and framerate of the decoded video, and wfb-ng link statistics.
 
 Tested on RK3566 (Radxa Zero 3W) and RK3588s (Orange Pi 5).
 
