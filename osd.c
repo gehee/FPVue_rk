@@ -14,17 +14,16 @@
 
 struct osd_vars osd_vars;
 
-void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *out, 
-	cairo_surface_t* fps_icon, cairo_surface_t* lat_icon, cairo_surface_t* net_icon) {
-    
-	// struct timespec draw_start, draw_end;
-	// clock_gettime(CLOCK_MONOTONIC, &draw_start);
+cairo_surface_t *fps_icon;
+cairo_surface_t *lat_icon;
+cairo_surface_t* net_icon;
 
-	struct modeset_buf *buf;
+pthread_mutex_t osd_mutex;
+
+void modeset_paint_buffer(struct modeset_buf *buf) {
 	unsigned int j,k,off;
 	cairo_t* cr;
 	cairo_surface_t *surface;
-	buf = &out->osd_bufs[out->osd_buf_curr];
 
 	// TODO(gehee) This takes forever.
 	for (j = 0; j < buf->height; ++j) {
@@ -124,22 +123,6 @@ void modeset_draw_osd(int fd, struct drm_object *plane, struct modeset_output *o
 		cairo_move_to(cr, osd_x+25, stats_top_margin+stats_row_height*row_count);
 		cairo_show_text(cr, msg);
 	}
-
-	// Commit fb change.
-	int ret;
-	drmModeAtomicReq *req = out->osd_request;
-	drmModeAtomicSetCursor(req, 0);
-	int fb = out->osd_bufs[out->osd_buf_curr].fb;
-  	ret = set_drm_object_property(req, plane, "FB_ID", fb);
-	assert(ret>0);
-	ret = drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_NONBLOCK, NULL);
-
-	// clock_gettime(CLOCK_MONOTONIC, &draw_end);
-	// uint64_t time_us=(draw_end.tv_sec - draw_start.tv_sec)*1000000ll + ((draw_end.tv_nsec - draw_start.tv_nsec)/1000ll) % 1000000ll;
-	// printf("osd drawn in %.2f ms\n", time_us/1000.0);			
-
-	// Switch buffer at each draw call
-	out->osd_buf_curr = (out->osd_buf_curr+1) % OSD_BUF_COUNT;
 }
 
 int osd_thread_signal;
@@ -174,16 +157,27 @@ cairo_surface_t * surface_from_embedded_png(const unsigned char * png, size_t le
 
 void *__OSD_THREAD__(void *param) {
 	osd_thread_params *p = param;
-	cairo_surface_t *fps_icon = surface_from_embedded_png(framerate_icon, framerate_icon_length);
-	cairo_surface_t *lat_icon = surface_from_embedded_png(latency_icon, latency_icon_length);
-	cairo_surface_t* net_icon = surface_from_embedded_png(bandwidth_icon, bandwidth_icon_length);
+	fps_icon = surface_from_embedded_png(framerate_icon, framerate_icon_length);
+	lat_icon = surface_from_embedded_png(latency_icon, latency_icon_length);
+	net_icon = surface_from_embedded_png(bandwidth_icon, bandwidth_icon_length);
 
-	struct modeset_buf *buf = &p->output_list->osd_bufs[0];
-	int ret = modeset_perform_modeset(p->fd, p->output_list, p->output_list->osd_request, &p->output_list->osd_plane, buf->fb, buf->width, buf->height, osd_vars.plane_zpos);
+	int ret = pthread_mutex_init(&osd_mutex, NULL);
+	assert(!ret);
+
+	struct modeset_buf *buf = &p->out->osd_bufs[p->out->osd_buf_switch];
+	ret = modeset_perform_modeset(p->fd, p->out, p->out->osd_request, &p->out->osd_plane, buf->fb, buf->width, buf->height, osd_vars.plane_zpos);
 	assert(ret >= 0);
 	while(!osd_thread_signal) {
-		modeset_draw_osd(p->fd, &p->output_list->osd_plane, p->output_list, fps_icon, lat_icon, net_icon);
-		usleep(1000000);
+		int buf_idx = p->out->osd_buf_switch ^ 1;
+		struct modeset_buf *buf = &p->out->osd_bufs[buf_idx];
+		modeset_paint_buffer(buf);
+
+		int ret = pthread_mutex_lock(&osd_mutex);
+		assert(!ret);	
+		p->out->osd_buf_switch = buf_idx;
+		ret = pthread_mutex_unlock(&osd_mutex);
+		assert(!ret);
+		usleep(osd_vars.refresh_frequency_ms*1000);
     }
 	printf("OSD thread done.\n");
 }

@@ -31,7 +31,7 @@ Build and run application in production environment:
 ```
 cmake -B build
 sudo cmake --build build --target install
-fpvue
+build/fpvue
 ```
 
 Build and run application for debugging purposes:
