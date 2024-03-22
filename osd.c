@@ -13,6 +13,7 @@
 #define PATH_MAX	4096
 
 struct osd_vars osd_vars;
+int osd_thread_signal = 0;
 
 typedef struct png_closure
 {
@@ -54,7 +55,8 @@ void modeset_paint_framebuffer(struct modeset_output *out) {
 	unsigned int j,k,off;
 	cairo_t* cr;
 	cairo_surface_t *surface;
-	struct modeset_buf *buf = &out->osd_bufs[out->osd_buf_switch ^ 1];
+
+	struct modeset_buf *buf = &out->osd_bufs[out->osd_buf_curr];
 
 	// TODO(gehee) This is super slow; re-enable with alpha.
 	// for (j = 0; j < buf->height; ++j) {
@@ -92,7 +94,7 @@ void modeset_paint_framebuffer(struct modeset_output *out) {
 		cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
 		cairo_move_to(cr, osd_x + 20, 200);
 		cairo_show_text(cr, str);
-		out->osd_buf_switch ^= 1;
+		out->osd_buf_curr = (out->osd_buf_curr+1) % OSD_BUF_COUNT;
 		return;
 	}
 
@@ -170,11 +172,24 @@ void modeset_paint_framebuffer(struct modeset_output *out) {
 		cairo_show_text(cr, msg);
 	}
 	last_osd_refresh = curr_time;
-	out->osd_buf_switch ^= 1;
+
+	// Switch buffer at each draw call
+	out->osd_buf_curr = (out->osd_buf_curr+1) % OSD_BUF_COUNT;
 }
 
 void init_icons() {
 	fps_icon = surface_from_embedded_png(framerate_icon, framerate_icon_length);
 	lat_icon = surface_from_embedded_png(latency_icon, latency_icon_length);
 	net_icon = surface_from_embedded_png(bandwidth_icon, bandwidth_icon_length);
+}
+
+
+void *__OSD_THREAD__(void *param) {
+	init_icons();
+	struct modeset_output *out = param;
+	while(!osd_thread_signal) {
+		modeset_paint_framebuffer(out);
+		usleep(1000000);
+    }
+	printf("OSD thread done.\n");
 }

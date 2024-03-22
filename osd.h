@@ -67,9 +67,12 @@ struct osd_vars {
 };
 
 extern struct osd_vars osd_vars;
+extern int osd_thread_signal;
 
 void modeset_paint_framebuffer(struct modeset_output *out);
 
 void init_icons();
+
+void *__OSD_THREAD__(void *param);
 
 #endif

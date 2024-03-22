@@ -42,7 +42,7 @@
 
 #define CODEC_ALIGN(x, a)   (((x)+(a)-1)&~((a)-1))
 
-pthread_t tid_frame, tid_display, tid_mavlink;
+pthread_t tid_frame, tid_display, tid_osd, tid_mavlink;
 
 struct {
 	MppCtx		  ctx;
@@ -86,43 +86,42 @@ long long bw_stats[10];
 
 
 int last_video_fb = 0;
-int last_osd_fb = 0;
 
 int displayed_frames = 0;
 uint64_t latency_avg[200];
 uint64_t min_latency = 1844674407370955161; // almost MAX_uint64_t
 uint64_t max_latency = 0;
 struct timespec osd_vars_start, osd_vars_end;
-struct timespec osd_draw_start, osd_draw_end;
 
 static void modeset_page_flip_event(int fd, unsigned int frame,
 				    unsigned int sec, unsigned int usec,
 				    unsigned int crtc_id, void *data)
 {
 	output->pflip_pending = false;
-	drmModeAtomicReq *req = output->request;
+	int ret;
 
 	// Update OSD vars
 	if (last_video_fb != output->video_cur_fb_id) {
+		printf("updating osd vars\n");
 		displayed_frames++;
 		clock_gettime(CLOCK_MONOTONIC, &osd_vars_end);
-		uint64_t time_us=(osd_vars_end.tv_sec - osd_vars_start.tv_sec)*1000000ll + ((osd_vars_end.tv_nsec - osd_vars_start.tv_nsec)/1000ll) % 1000000ll;
+		uint64_t time_us = (osd_vars_end.tv_sec - osd_vars_start.tv_sec)*1000000ll + ((osd_vars_end.tv_nsec - osd_vars_start.tv_nsec)/1000ll) % 1000000ll;
 		if (time_us >= 1000000) {
-			uint64_t sum = 0;
-			for (int i = 0; i < displayed_frames; ++i) {
-				sum += latency_avg[i];
-				if (latency_avg[i] > max_latency) {
-					max_latency = latency_avg[i];
-				}
-				if (latency_avg[i] < min_latency) {
-					min_latency = latency_avg[i];
-				}
-			}
-			osd_vars.latency_avg = sum / (displayed_frames);
-			osd_vars.latency_max = max_latency;
-			osd_vars.latency_min = min_latency;
+			// uint64_t sum = 0;
+			// for (int i = 0; i < displayed_frames; ++i) {
+			// 	sum += latency_avg[i];
+			// 	if (latency_avg[i] > max_latency) {
+			// 		max_latency = latency_avg[i];
+			// 	}
+			// 	if (latency_avg[i] < min_latency) {
+			// 		min_latency = latency_avg[i];
+			// 	}
+			// }
+		// 	osd_vars.latency_avg = sum / (displayed_frames);
+		// 	osd_vars.latency_max = max_latency;
+		// 	osd_vars.latency_min = min_latency;
 
-			//printf("display latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, displayed_frames);	
+		// 	//printf("display latency=%.2f ms (%.2f, %.2f), framerate=%d fps\n", osd_vars.latency_avg/1000.0, osd_vars.latency_max/1000.0, osd_vars.latency_min/1000.0, displayed_frames);	
 			
 			osd_vars_start = osd_vars_end;
 			displayed_frames = 0;
@@ -130,39 +129,33 @@ static void modeset_page_flip_event(int fd, unsigned int frame,
 			min_latency = 1844674407370955161;
 		}
 		struct timespec rtime = frame_stats_byfd[output->video_cur_fb_id];
-		latency_avg[displayed_frames] = (osd_vars_end.tv_sec - rtime.tv_sec)*1000000ll + ((osd_vars_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
+		printf("osd_vars_end %d\n", osd_vars_end.tv_sec);
+		printf("osd_vars_end %d\n", osd_vars_end.tv_nsec);
+		printf("rtime %d\n", rtime.tv_sec);
+		printf("rtime %d\n", rtime.tv_nsec);
+		uint64_t ltc = (osd_vars_end.tv_sec - rtime.tv_sec)*1000000ll + ((osd_vars_end.tv_nsec - rtime.tv_nsec)/1000ll) % 1000000ll;
+		printf("ltc %d\n", ltc);
+		printf("displayed_frames %d\n", displayed_frames);
+		//latency_avg[displayed_frames] = ltc;
 	}
 
-	int ret;
-	drmModeAtomicSetCursor(req, 0);
-
-	// Render OSD
-	int osd_fb = output->osd_bufs[output->osd_buf_switch ^ 1].fb;
+	drmModeAtomicSetCursor(output->request, 0);
 	if (osd_vars.enable) {
-		clock_gettime(CLOCK_MONOTONIC, &osd_draw_start);
-		modeset_paint_framebuffer(output);
-		if (osd_fb!=last_osd_fb) {
-			ret = set_drm_object_property(req, &output->osd_plane, "FB_ID", osd_fb);
-			assert(ret>0);
-		}
-		clock_gettime(CLOCK_MONOTONIC, &osd_draw_end);
-		uint64_t time_us=(osd_draw_end.tv_sec - osd_draw_start.tv_sec)*1000000ll + ((osd_draw_end.tv_nsec - osd_draw_start.tv_nsec)/1000ll) % 1000000ll;
-		printf("modeset_paint_framebuffer=%.2f ms\n", time_us/1000.0);	
-			
+		int osd_fb = output->osd_bufs[output->osd_buf_curr].fb;
+		ret = set_drm_object_property(output->request, &output->osd_plane, "FB_ID", osd_fb);
+		assert(ret>0);	
 	}
-
-	ret = set_drm_object_property(req, &output->video_plane, "FB_ID", output->video_cur_fb_id);
+	ret = set_drm_object_property(output->request, &output->video_plane, "FB_ID", output->video_cur_fb_id);
 	assert(ret>0);
 	
 	int flags = DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK;
-	ret = drmModeAtomicCommit(fd,  req, flags, NULL);
+	ret = drmModeAtomicCommit(fd,  output->request, flags, NULL);
 	if (ret < 0) {
 		fprintf(stderr, "atomic commit failed, %m\n", errno);
 		return;
 	}
 	output->pflip_pending = true;
 	last_video_fb=output->video_cur_fb_id;
-	last_osd_fb=osd_fb;
 }
 
 // signal
@@ -174,6 +167,7 @@ void sig_handler(int signum)
 	printf("Received signal %d\n", signum);
 	signal_flag++;
 	mavlink_thread_signal++;
+	osd_thread_signal++;
 }
 
 void *__DISPLAY_THREAD__(void *param)
@@ -624,8 +618,12 @@ int main(int argc, char **argv)
  	//////////////////// THREADS SETUP
 	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 	assert(!ret);
+	if (osd_vars.enable) {
+		ret = pthread_create(&tid_osd, NULL, __OSD_THREAD__, &output);
+		assert(!ret);
+	}
 	if (osd_vars.enable && enable_mavlink) {
-		ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, &signal_flag);
+		ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, NULL);
 		assert(!ret);
 	}
 
@@ -645,6 +643,11 @@ int main(int argc, char **argv)
 
 	if (enable_mavlink) {
 		ret = pthread_join(tid_mavlink, NULL);
+		assert(!ret);
+	}
+
+	if (osd_vars.enable) {
+		ret = pthread_join(tid_osd, NULL);
 		assert(!ret);
 	}
 
