@@ -114,8 +114,8 @@ void *__FRAME_THREAD__(void *param)
 			
 				output_list->video_fb_x = 0;
 				output_list->video_fb_y = 0;
-				output_list->video_fb_width = output_list->video_crtc_width;
-				output_list->video_fb_height = output_list->video_crtc_height;		
+				output_list->video_fb_width = output_list->mode.hdisplay;
+				output_list->video_fb_height =output_list->mode.vdisplay;	
 
 				osd_vars.video_width = output_list->video_frm_width;
 				osd_vars.video_height = output_list->video_frm_height;

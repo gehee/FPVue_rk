@@ -390,15 +390,15 @@ void modeset_destroy_fb(int fd, struct modeset_buf *buf)
 int modeset_setup_framebuffers(int fd, drmModeConnector *conn, struct modeset_output *out)
 {
 	for (int i=0; i<OSD_BUF_COUNT; i++) {
-		out->osd_bufs[i].width = conn->modes[0].hdisplay;
-		out->osd_bufs[i].height = conn->modes[0].vdisplay;
+		out->osd_bufs[i].width = out->mode.hdisplay;
+		out->osd_bufs[i].height = out->mode.vdisplay;
 		int ret = modeset_create_fb(fd, &out->osd_bufs[i]);
 		if (ret) {
 			return ret;
 		}
 	}
-	out->video_crtc_width = conn->modes[0].hdisplay;
-	out->video_crtc_height = conn->modes[0].vdisplay;
+	out->video_crtc_width = out->mode.hdisplay;
+	out->video_crtc_height = out->mode.vdisplay;
 	return 0;
 }
 
