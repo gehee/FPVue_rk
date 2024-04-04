@@ -445,19 +445,21 @@ void printHelp() {
     "    fpvue [Arguments]\n"
     "\n"
     "  Arguments:\n"
-    "    -p [Port]         	- Listen port                           (Default: 5600)\n"
+    "    -p [Port]         		- Listen port                           (Default: 5600)\n"
     "\n"
-    "    --osd          	- Enable OSD\n"
+    "    --osd          		- Enable OSD\n"
     "\n"
-    "    --osd-elements 	- Customize osd elements   			    (Default: video,wfbng)\n"
+    "    --osd-elements 		- Customize osd elements   			    (Default: video,wfbng,telem)\n"
     "\n"
-    "    --osd-refresh  	- Defines the delay between osd refresh (Default: 1000 ms)\n"
+    "    --osd-telem-lvl		- Level of details for telemetry in the OSD (Default: 1 [1-2])\n"
     "\n"
-    "    --dvr             	- Save the video feed (no osd) to the provided filename\n"
+    "    --osd-refresh  		- Defines the delay between osd refresh (Default: 1000 ms)\n"
     "\n"
-    "    --mpp-split-mode  	- Enable rockchip MPP_DEC_SET_PARSER_SPLIT_MODE, required when the video stream uses slices\n"
+    "    --dvr             		- Save the video feed (no osd) to the provided filename\n"
     "\n"
-    "    --screen-mode      - Override default screen mode. ex:1920x1080@120\n"
+    "    --mpp-split-mode  		- Enable rockchip MPP_DEC_SET_PARSER_SPLIT_MODE, required when the video stream uses slices\n"
+    "\n"
+    "    --screen-mode      	- Override default screen mode. ex:1920x1080@120\n"
     "\n", __DATE__
   );
 }
@@ -469,7 +471,7 @@ int main(int argc, char **argv)
 	int ret;	
 	int i, j;
 	int enable_osd = 0;
-	int enable_mavlink = 0;
+	int mavlink_thread = 0;
 	uint16_t listen_port = 5600;
 	uint16_t mavlink_port = 14550;
 	uint16_t mode_width = 0;
@@ -503,7 +505,8 @@ int main(int argc, char **argv)
 		} 
 		osd_vars.enable_video = 1;
 		osd_vars.enable_wfbng = 1;
-		enable_mavlink = 1;
+		osd_vars.enable_telemetry = 0;
+		mavlink_thread = 1;
 		continue;
 	}
 
@@ -515,6 +518,7 @@ int main(int argc, char **argv)
 	__OnArgument("--osd-elements") {
 		osd_vars.enable_video = 0;
 		osd_vars.enable_wfbng = 0;
+		osd_vars.enable_telemetry = 0;
 		char* elements = __ArgValue;
 		char* element = strtok(elements, ",");
 		while( element != NULL ) {
@@ -522,10 +526,18 @@ int main(int argc, char **argv)
 				osd_vars.enable_video = 1;
 			} else if (!strcmp(element, "wfbng")) {
 				osd_vars.enable_wfbng = 1;
-				enable_mavlink = 1;
+				mavlink_thread = 1;
+			} else if (!strcmp(element, "telem")) {
+				osd_vars.enable_telemetry = 1;
+				mavlink_thread = 1;
 			}
 			element = strtok(NULL, ",");
 		}
+		continue;
+	}
+
+	__OnArgument("--osd-telem-lvl") {
+		osd_vars.telemetry_level = atoi(__ArgValue);
 		continue;
 	}
 
@@ -603,7 +615,7 @@ int main(int argc, char **argv)
 	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, NULL);
 	assert(!ret);
 	if (enable_osd) {
-		if (enable_mavlink) {
+		if (mavlink_thread) {
 			ret = pthread_create(&tid_mavlink, NULL, __MAVLINK_THREAD__, &signal_flag);
 			assert(!ret);
 		}
@@ -638,7 +650,7 @@ int main(int argc, char **argv)
 	ret = pthread_mutex_destroy(&video_mutex);
 	assert(!ret);
 
-	if (enable_mavlink) {
+	if (mavlink_thread) {
 		ret = pthread_join(tid_mavlink, NULL);
 		assert(!ret);
 	}

@@ -30,8 +30,8 @@ struct osd_vars {
     int8_t wfb_flags;
 
 	// Mavlink
-    // TODO (gehee) Render these elements in OSD.
-    bool enable_mavlink;
+    int enable_telemetry;
+    int telemetry_level;
     float telemetry_altitude;
     float telemetry_pitch;
     float telemetry_roll;
