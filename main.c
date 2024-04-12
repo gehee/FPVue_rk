@@ -384,8 +384,7 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 
 		uint16_t rtp_seq = rtp_sequence((const rtp_header_t *)(rx_buffer+8));
 		int missed = rtp_seq - last_rtp_seq % 65535;
-		if (wait_start == 0 && missed > 1 ) {
-			wait_start = 1;
+		if (missed > 1 ) {
     		printf("Missed %d rtp frames.\n", missed);
 		}
 		last_rtp_seq = rtp_seq;
