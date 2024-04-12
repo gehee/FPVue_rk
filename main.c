@@ -37,8 +37,6 @@
 #include "mavlink/common/mavlink.h"
 #include "mavlink.h"
 
-
-
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
 #define MAX_FRAMES 24		// min 16 and 20+ recommended (mpp/readme.txt)
 
@@ -78,6 +76,91 @@ int bw_curr = 0;
 long long bw_stats[10];
 int video_zpos = 1;
 
+void init_buffer(MppFrame* frame) {
+	assert(!mpi.frm_grp);
+
+	output_list->video_frm_width = CODEC_ALIGN(mpp_frame_get_width(frame),16);
+	output_list->video_frm_height = CODEC_ALIGN(mpp_frame_get_height(frame),16);
+	RK_U32 hor_stride = mpp_frame_get_hor_stride(frame);
+	RK_U32 ver_stride = mpp_frame_get_ver_stride(frame);
+	MppFrameFormat fmt = mpp_frame_get_fmt(frame);
+	assert((fmt == MPP_FMT_YUV420SP) || (fmt == MPP_FMT_YUV420SP_10BIT));
+
+	printf("Frame info changed %d(%d)x%d(%d)\n", output_list->video_frm_width, hor_stride, output_list->video_frm_height, ver_stride);
+
+	output_list->video_fb_x = 0;
+	output_list->video_fb_y = 0;
+	output_list->video_fb_width = output_list->mode.hdisplay;
+	output_list->video_fb_height =output_list->mode.vdisplay;	
+
+	osd_vars.video_width = output_list->video_frm_width;
+	osd_vars.video_height = output_list->video_frm_height;
+
+	// create new external frame group and allocate (commit flow) new DRM buffers and DRM FB
+	assert(!mpi.frm_grp);
+	int ret = mpp_buffer_group_get_external(&mpi.frm_grp, MPP_BUFFER_TYPE_DRM);
+	assert(!ret);			
+
+	for (int i=0; i<MAX_FRAMES; i++) {
+		
+		// new DRM buffer
+		struct drm_mode_create_dumb dmcd;
+		memset(&dmcd, 0, sizeof(dmcd));
+		dmcd.bpp = fmt==MPP_FMT_YUV420SP?8:10;
+		dmcd.width = hor_stride;
+		dmcd.height = ver_stride*2; // documentation say not v*2/3 but v*2 (additional info included)
+		do {
+			ret = ioctl(drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &dmcd);
+		} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+		assert(!ret);
+		assert(dmcd.pitch==(fmt==MPP_FMT_YUV420SP?hor_stride:hor_stride*10/8));
+		assert(dmcd.size==(fmt == MPP_FMT_YUV420SP?hor_stride:hor_stride*10/8)*ver_stride*2);
+		mpi.frame_to_drm[i].handle = dmcd.handle;
+		
+		// commit DRM buffer to frame group
+		struct drm_prime_handle dph;
+		memset(&dph, 0, sizeof(struct drm_prime_handle));
+		dph.handle = dmcd.handle;
+		dph.fd = -1;
+		do {
+			ret = ioctl(drm_fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &dph);
+		} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+		assert(!ret);
+		MppBufferInfo info;
+		memset(&info, 0, sizeof(info));
+		info.type = MPP_BUFFER_TYPE_DRM;
+		info.size = dmcd.width*dmcd.height;
+		info.fd = dph.fd;
+		ret = mpp_buffer_commit(mpi.frm_grp, &info);
+		assert(!ret);
+		mpi.frame_to_drm[i].prime_fd = info.fd; // dups fd						
+		if (dph.fd != info.fd) {
+			ret = close(dph.fd);
+			assert(!ret);
+		}
+
+		// allocate DRM FB from DRM buffer
+		uint32_t handles[4], pitches[4], offsets[4];
+		memset(handles, 0, sizeof(handles));
+		memset(pitches, 0, sizeof(pitches));
+		memset(offsets, 0, sizeof(offsets));
+		handles[0] = mpi.frame_to_drm[i].handle;
+		offsets[0] = 0;
+		pitches[0] = hor_stride;						
+		handles[1] = mpi.frame_to_drm[i].handle;
+		offsets[1] = pitches[0] * ver_stride;
+		pitches[1] = pitches[0];
+		ret = drmModeAddFB2(drm_fd, output_list->video_frm_width, output_list->video_frm_height, DRM_FORMAT_NV12, handles, pitches, offsets, &mpi.frame_to_drm[i].fb_id, 0);
+		assert(!ret);
+	}
+
+	// register external frame group
+	ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_EXT_BUF_GROUP, mpi.frm_grp);
+	ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_INFO_CHANGE_READY, NULL);
+
+	ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos);
+	assert(ret >= 0);
+}
 
 // __FRAME_THREAD__
 //
@@ -86,10 +169,9 @@ int video_zpos = 1;
 
 void *__FRAME_THREAD__(void *param)
 {
-	int ret;
-	int i;	
+	int i, ret;
 	MppFrame  frame  = NULL;
-	int frid = 0;
+	uint64_t last_frame_time;
 
 	while (!frm_eos) {
 		struct timespec ts, ats;
@@ -101,90 +183,7 @@ void *__FRAME_THREAD__(void *param)
 		if (frame) {
 			if (mpp_frame_get_info_change(frame)) {
 				// new resolution
-				assert(!mpi.frm_grp);
-
-				output_list->video_frm_width = CODEC_ALIGN(mpp_frame_get_width(frame),16);
-				output_list->video_frm_height = CODEC_ALIGN(mpp_frame_get_height(frame),16);
-				RK_U32 hor_stride = mpp_frame_get_hor_stride(frame);
-				RK_U32 ver_stride = mpp_frame_get_ver_stride(frame);
-				MppFrameFormat fmt = mpp_frame_get_fmt(frame);
-				assert((fmt == MPP_FMT_YUV420SP) || (fmt == MPP_FMT_YUV420SP_10BIT));
-
-				printf("Frame info changed %d(%d)x%d(%d)\n", output_list->video_frm_width, hor_stride, output_list->video_frm_height, ver_stride);
-			
-				output_list->video_fb_x = 0;
-				output_list->video_fb_y = 0;
-				output_list->video_fb_width = output_list->mode.hdisplay;
-				output_list->video_fb_height =output_list->mode.vdisplay;	
-
-				osd_vars.video_width = output_list->video_frm_width;
-				osd_vars.video_height = output_list->video_frm_height;
-
-				// create new external frame group and allocate (commit flow) new DRM buffers and DRM FB
-				assert(!mpi.frm_grp);
-				ret = mpp_buffer_group_get_external(&mpi.frm_grp, MPP_BUFFER_TYPE_DRM);
-				assert(!ret);			
-	
-				for (i=0; i<MAX_FRAMES; i++) {
-					
-					// new DRM buffer
-					struct drm_mode_create_dumb dmcd;
-					memset(&dmcd, 0, sizeof(dmcd));
-					dmcd.bpp = fmt==MPP_FMT_YUV420SP?8:10;
-					dmcd.width = hor_stride;
-					dmcd.height = ver_stride*2; // documentation say not v*2/3 but v*2 (additional info included)
-					do {
-						ret = ioctl(drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &dmcd);
-					} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
-					assert(!ret);
-					assert(dmcd.pitch==(fmt==MPP_FMT_YUV420SP?hor_stride:hor_stride*10/8));
-					assert(dmcd.size==(fmt == MPP_FMT_YUV420SP?hor_stride:hor_stride*10/8)*ver_stride*2);
-					mpi.frame_to_drm[i].handle = dmcd.handle;
-					
-					// commit DRM buffer to frame group
-					struct drm_prime_handle dph;
-					memset(&dph, 0, sizeof(struct drm_prime_handle));
-					dph.handle = dmcd.handle;
-					dph.fd = -1;
-					do {
-						ret = ioctl(drm_fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &dph);
-					} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
-					assert(!ret);
-					MppBufferInfo info;
-					memset(&info, 0, sizeof(info));
-					info.type = MPP_BUFFER_TYPE_DRM;
-					info.size = dmcd.width*dmcd.height;
-					info.fd = dph.fd;
-					ret = mpp_buffer_commit(mpi.frm_grp, &info);
-					assert(!ret);
-					mpi.frame_to_drm[i].prime_fd = info.fd; // dups fd						
-					if (dph.fd != info.fd) {
-						ret = close(dph.fd);
-						assert(!ret);
-					}
-
-					// allocate DRM FB from DRM buffer
-					uint32_t handles[4], pitches[4], offsets[4];
-					memset(handles, 0, sizeof(handles));
-					memset(pitches, 0, sizeof(pitches));
-					memset(offsets, 0, sizeof(offsets));
-					handles[0] = mpi.frame_to_drm[i].handle;
-					offsets[0] = 0;
-					pitches[0] = hor_stride;						
-					handles[1] = mpi.frame_to_drm[i].handle;
-					offsets[1] = pitches[0] * ver_stride;
-					pitches[1] = pitches[0];
-					ret = drmModeAddFB2(drm_fd, output_list->video_frm_width, output_list->video_frm_height, DRM_FORMAT_NV12, handles, pitches, offsets, &mpi.frame_to_drm[i].fb_id, 0);
-					assert(!ret);
-				}
-
-				// register external frame group
-				ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_EXT_BUF_GROUP, mpi.frm_grp);
-				ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_INFO_CHANGE_READY, NULL);
-
-				ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos);
-				assert(ret >= 0);
-
+				init_buffer(frame);
 			} else {
 				// regular frame received
 				if (!mpi.first_frame_ts.tv_sec) {
@@ -195,7 +194,6 @@ void *__FRAME_THREAD__(void *param)
 				MppBuffer buffer = mpp_frame_get_buffer(frame);					
 				if (buffer) {
 					output_list->video_poc = mpp_frame_get_poc(frame);
-					// find fb_id by frame prime_fd
 					MppBufferInfo info;
 					ret = mpp_buffer_info_get(buffer, &info);
 					assert(!ret);
@@ -205,12 +203,10 @@ void *__FRAME_THREAD__(void *param)
 					assert(i!=MAX_FRAMES);
 
 					ts = ats;
-					frid++;
 					
 					// send DRM FB to display thread
 					ret = pthread_mutex_lock(&video_mutex);
 					assert(!ret);
-					if (output_list->video_fb_id) output_list->video_skipped_frames++;
 					output_list->video_fb_id = mpi.frame_to_drm[i].fb_id;
 					ret = pthread_cond_signal(&video_cond);
 					assert(!ret);
@@ -256,10 +252,7 @@ void *__DISPLAY_THREAD__(void *param)
 		struct timespec ts, ats;
 		clock_gettime(CLOCK_MONOTONIC, &ats);
 		fb_id = output_list->video_fb_id;
-		if (output_list->video_skipped_frames) 
-			printf("Display skipped %d frame.\n", output_list->video_skipped_frames);
 		output_list->video_fb_id=0;
-		output_list->video_skipped_frames=0;
 		ret = pthread_mutex_unlock(&video_mutex);
 		assert(!ret);
 
@@ -348,7 +341,7 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 
 	uint8_t* rx_buffer = malloc(1024 * 1024);
     
-	int nalStart = 0;
+	int wait_start = 1;
 	int poc = 0;
 	int ret = 0;
 	struct timespec recv_ts;
@@ -361,7 +354,7 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 			printf("ERROR: unable to open %s\n", dvr_file);
 		}
 	}
-
+	uint16_t last_rtp_seq = 0;
 	struct timespec bw_start, bw_end;
 	clock_gettime(CLOCK_MONOTONIC, &bw_start);
 	while (!signal_flag) {
@@ -389,6 +382,14 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 			rtp_header = 12;
 		}
 
+		uint16_t rtp_seq = rtp_sequence((const rtp_header_t *)(rx_buffer+8));
+		int missed = rtp_seq - last_rtp_seq % 65535;
+		if (wait_start == 0 && missed > 1 ) {
+			wait_start = 1;
+    		printf("Missed %d rtp frames.\n", missed);
+		}
+		last_rtp_seq = rtp_seq;
+
 		// Decode frame
 		uint32_t nal_size = 0;
 		nal = decode_frame(rx_buffer + 8, rx, rtp_header, nal_buffer, &nal_size);
@@ -400,13 +401,12 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 			printf("> Broken frame\n");
 			break;
 		}
-
 	
 		uint8_t nal_type_hevc = (nal[4] >> 1) & 0x3F;
-		if (nalStart==0 && nal_type_hevc == 1) { //hevc
+		if (wait_start==1 && nal_type_hevc == 1) { //hevc
 			continue;
 		}
-		nalStart = 1;
+		wait_start = 0;
 		if (nal_type_hevc == 19) {
 			poc = 0;
 		}
@@ -417,7 +417,7 @@ int read_rtp_stream(int port, MppPacket *packet, uint8_t* nal_buffer) {
 
 		// send packet until it success
 		while (!signal_flag && MPP_OK != (ret = mpi.mpi->decode_put_packet(mpi.ctx, packet))) {
-				usleep(10000);
+				usleep(2000);
 		}
 		poc ++;
 

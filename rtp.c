@@ -1,5 +1,10 @@
 #include "rtp.h"
 #include <string.h>
+#include <arpa/inet.h>
+
+uint16_t rtp_sequence(const rtp_header_t *header) {
+   return ntohs(header->sequence_number);
+}
 
 uint32_t frames_received = 0;
 uint32_t in_nal_size = 0;
