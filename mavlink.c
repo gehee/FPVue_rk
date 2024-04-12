@@ -118,6 +118,7 @@ void* __MAVLINK_THREAD__(void* arg) {
     }
 
     // Parse
+    // Credit to openIPC:https://github.com/OpenIPC/silicon_research/blob/master/vdec/main.c#L1020
     mavlink_message_t message;
     mavlink_status_t status;
     for (int i = 0; i < ret; ++i) {

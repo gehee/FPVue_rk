@@ -13,9 +13,9 @@ struct osd_vars {
     bool enable_video;
 	int current_framerate;
     bool enable_latency;
-	uint64_t latency_avg;
-	uint64_t latency_max;
-	uint64_t latency_min;
+	float latency_avg;
+	float latency_max;
+	float latency_min;
 	// Video Feed
 	int bw_curr;
 	long long bw_stats[10];

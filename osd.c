@@ -90,7 +90,7 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
 				cairo_paint (cr);
 				cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
 				cairo_move_to (cr,osd_x+60, stats_top_margin+stats_row_height*2);
-				sprintf(msg, "%.2f ms (%.2f, %.2f)", osd_vars.latency_avg/1000.0, osd_vars.latency_min/1000.0, osd_vars.latency_max/1000.0);
+				sprintf(msg, "%.2f ms (%.2f, %.2f)", osd_vars.latency_avg, osd_vars.latency_min, osd_vars.latency_max);
 				cairo_show_text (cr, msg);
 			}
 			

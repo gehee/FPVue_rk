@@ -67,6 +67,9 @@ struct modeset_output {
 	RK_U32 video_frm_height;
 	int video_fb_x, video_fb_y, video_fb_width, video_fb_height;
 	int video_fb_id;
+
+    // Used to calculate latency
+    uint64_t decoding_pts;
 	int video_poc;
 
 	bool cleanup;
