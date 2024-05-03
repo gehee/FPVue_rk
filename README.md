@@ -15,6 +15,7 @@ Build on the Rockchip linux system directly.
 
 ```
 git clone https://github.com/rockchip-linux/mpp.git
+cmake -B build
 sudo cmake --build build --target install
 ```
 
@@ -22,6 +23,12 @@ sudo cmake --build build --target install
 
 ```
 sudo apt install libdrm-dev libcairo-dev
+```
+
+- gstreamer
+
+```
+sudo apt install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev
 ```
 
 ## Build Instructions
