@@ -43,6 +43,7 @@ extern "C" {
 #include "gstrtpreceiver.h"
 #include "scheduling_helper.hpp"
 #include "time_util.h"
+#include "fpvue_config.h"
 
 
 #define READ_BUF_SIZE (1024*1024) // SZ_1M https://github.com/rockchip-linux/mpp/blob/ed377c99a733e2cdbcc457a6aa3f0fcd438a9dff/osal/inc/mpp_common.h#L179
@@ -441,7 +442,7 @@ void set_mpp_decoding_parameters(MppApi * mpi,  MppCtx ctx) {
 
 void printHelp() {
   printf(
-    "\n\t\tFPVue FPV Decoder for Rockchip (%s)\n"
+    "\n\t\tFPVue FPV Decoder for Rockchip (%d.%d)\n"
     "\n"
     "  Usage:\n"
     "    fpvue [Arguments]\n"
@@ -459,8 +460,8 @@ void printHelp() {
     "\n"
     "    --dvr             		- Save the video feed (no osd) to the provided filename\n"
     "\n"
-    "    --screen-mode      	- Override default screen mode. ex:1920x1080@120\n"
-    "\n", __DATE__
+    "    --screen-mode   		- Override default screen mode. ex:1920x1080@120\n"
+    "\n", fpvue_VERSION_MAJOR , fpvue_VERSION_MINOR
   );
 }
 
@@ -562,7 +563,14 @@ int main(int argc, char **argv)
 		continue;
 	}
 
+	__OnArgument("--version") {
+		printf("FPVue Rockchip %d.%d\n", fpvue_VERSION_MAJOR , fpvue_VERSION_MINOR);
+		return 0;
+	}
+
 	__EndParseConsoleArguments__
+
+	printf("FPVue Rockchip %d.%d\n", fpvue_VERSION_MAJOR , fpvue_VERSION_MINOR);
 
 	if (enable_osd == 0 ) {
 		video_zpos = 4;

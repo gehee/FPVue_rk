@@ -1,6 +1,6 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.1)
 
-project(fpvue)
+project(fpvue VERSION 0.1)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -45,6 +45,9 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
     BEFORE PUBLIC -fsanitize=undefined PUBLIC -fsanitize=address
   )
 endif()
+
+configure_file(fpvue_config.h.in fpvue_config.h)
+target_include_directories(${PROJECT_NAME} PUBLIC "${PROJECT_BINARY_DIR}")
 
 include(GNUInstallDirs)
 install(TARGETS ${PROJECT_NAME}
