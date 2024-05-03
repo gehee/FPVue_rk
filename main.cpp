@@ -77,8 +77,6 @@ int video_zpos = 1;
 FILE *dvr_file = NULL;
 
 void init_buffer(MppFrame frame) {
-	assert(!mpi.frm_grp);
-
 	output_list->video_frm_width = CODEC_ALIGN(mpp_frame_get_width(frame),16);
 	output_list->video_frm_height = CODEC_ALIGN(mpp_frame_get_height(frame),16);
 	RK_U32 hor_stride = mpp_frame_get_hor_stride(frame);
@@ -97,7 +95,6 @@ void init_buffer(MppFrame frame) {
 	osd_vars.video_height = output_list->video_frm_height;
 
 	// create new external frame group and allocate (commit flow) new DRM buffers and DRM FB
-	assert(!mpi.frm_grp);
 	int ret = mpp_buffer_group_get_external(&mpi.frm_grp, MPP_BUFFER_TYPE_DRM);
 	assert(!ret);			
 

@@ -63,8 +63,8 @@ struct modeset_output {
 	// Video variables
 	drmModeAtomicReq *video_request;
 	struct drm_object video_plane;
-	RK_U32 video_frm_width;
-	RK_U32 video_frm_height;
+	uint32_t video_frm_width;
+	uint32_t video_frm_height;
 	int video_fb_x, video_fb_y, video_fb_width, video_fb_height;
 	int video_fb_id;
 
@@ -108,9 +108,9 @@ struct modeset_output *modeset_output_create(int fd, drmModeRes *res, drmModeCon
 
 int modeset_prepare(int fd, struct modeset_output *output_list, uint16_t mode_width, uint16_t mode_height, uint32_t mode_vrefresh);
 
-int modeset_perform_modeset(int fd, struct modeset_output *out, drmModeAtomicReq * req, struct drm_object *plane, int fb_id, int width, int height, int zpos);
+int modeset_perform_modeset(int fd, struct modeset_output *out, drmModeAtomicReq * req, struct drm_object *plane, int fb_id, uint32_t width, uint32_t height, int zpos);
 
-int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, int fb_id, int width, int height, int zpos);
+int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, int fb_id, uint32_t width, uint32_t height, int zpos);
 
 void restore_planes_zpos(int fd, struct modeset_output *output_list);
 

@@ -548,7 +548,7 @@ int modeset_prepare(int fd, struct modeset_output *output_list, uint16_t mode_wi
 	return 0;
 }
 
-int modeset_perform_modeset(int fd, struct modeset_output *out, drmModeAtomicReq * req, struct drm_object *plane, int fb_id, int width, int height, int zpos)
+int modeset_perform_modeset(int fd, struct modeset_output *out, drmModeAtomicReq * req, struct drm_object *plane, int fb_id, uint32_t width, uint32_t height, int zpos)
 {
 	int ret, flags;
 
@@ -577,7 +577,7 @@ int modeset_perform_modeset(int fd, struct modeset_output *out, drmModeAtomicReq
 
 
 int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAtomicReq *req, struct drm_object *plane, 
-	int fb_id, int width, int height, int zpos)
+	int fb_id, uint32_t width, uint32_t height, int zpos)
 {
 	if (set_drm_object_property(req, &out->connector, "CRTC_ID", out->crtc.id) < 0)
 		return -1;
@@ -597,20 +597,25 @@ int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAto
 		return -1;
 	if (set_drm_object_property(req, plane, "SRC_H", height << 16) < 0)
 		return -1;
-	if (set_drm_object_property(req, plane, "CRTC_X", 0) < 0)
-		return -1;
-	if (set_drm_object_property(req, plane, "CRTC_Y", 0) < 0)
-		return -1;
-	int crtcw = out->video_crtc_width;
-	if (crtcw < width) {
-		crtcw = width;
+
+	uint32_t crtcw =  out->video_crtc_width;
+	uint32_t crtch = out->video_crtc_height;
+	float video_ratio = (float)width/height;
+	if (crtcw / video_ratio > crtch) {
+		crtcw = crtch * video_ratio;
+		crtch = crtch;
+	} else {
+		crtcw = crtcw;
+		crtch = crtcw / video_ratio;
 	}
+	int crtcx = (out->video_crtc_width - crtcw) / 2;
+	int crtcy = (out->video_crtc_height - crtch) / 2;
+	if (set_drm_object_property(req, plane, "CRTC_X", crtcx) < 0)
+		return -1;
+	if (set_drm_object_property(req, plane, "CRTC_Y", crtcy) < 0)
+		return -1;
 	if (set_drm_object_property(req, plane, "CRTC_W", crtcw) < 0)
 		return -1;
-	int crtch = out->video_crtc_height;
-	if (crtch < height) {
-		crtch = height;
-	}
 	if (set_drm_object_property(req, plane, "CRTC_H", crtch) < 0)
 		return -1;
 	if (set_drm_object_property(req, plane, "zpos", zpos) < 0)
