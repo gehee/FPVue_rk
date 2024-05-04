@@ -90,7 +90,7 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
 				cairo_paint (cr);
 				cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
 				cairo_move_to (cr,osd_x+60, stats_top_margin+stats_row_height*2);
-				sprintf(msg, "%.2f ms (%.2f, %.2f)", osd_vars.latency_avg, osd_vars.latency_min, osd_vars.latency_max);
+				sprintf(msg, "%.2f ms (%.f, %.f)", osd_vars.latency_avg, osd_vars.latency_min, osd_vars.latency_max);
 				cairo_show_text (cr, msg);
 			}
 			
@@ -107,11 +107,11 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
 					avg_cnt++;
 				}
 			}
-			avg_bw = avg_bw / avg_cnt / 100;
+			avg_bw = avg_bw / avg_cnt;
 			if (avg_bw < 1000) {
-				sprintf(msg, "%.2f KB/s", avg_bw );
+				sprintf(msg, "%.2f Kbps", avg_bw / 125 );
 			} else {
-				sprintf(msg, "%.2f MB/s", avg_bw / 1000 );
+				sprintf(msg, "%.2f Mbps", avg_bw / 125000 );
 			}
 			row_count++;
 			cairo_set_source_surface (cr, net_icon, osd_x+22, stats_top_margin+row_count*stats_row_height-19);

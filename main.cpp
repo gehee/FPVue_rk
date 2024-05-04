@@ -237,9 +237,9 @@ void *__DISPLAY_THREAD__(void *param)
 {
 	int ret;	
 	int frame_counter = 0;
-	uint64_t latency_avg[200];
-	uint64_t min_latency = 1844674407370955161; // almost MAX_uint64_t
-	uint64_t max_latency = 0;
+	float latency_avg[200];
+	float min_latency = 1844674407370955161; // almost MAX_uint64_t
+	float max_latency = 0;
     struct timespec fps_start, fps_end;
 	clock_gettime(CLOCK_MONOTONIC, &fps_start);
 
@@ -287,7 +287,7 @@ void *__DISPLAY_THREAD__(void *param)
 		clock_gettime(CLOCK_MONOTONIC, &fps_end);
 		uint64_t time_us=(fps_end.tv_sec - fps_start.tv_sec)*1000000ll + ((fps_end.tv_nsec - fps_start.tv_nsec)/1000ll) % 1000000ll;
 		if (time_us >= osd_vars.refresh_frequency_ms*1000) {
-			uint64_t sum = 0;
+			float sum = 0;
 			for (int i = 0; i < frame_counter; ++i) {
 				sum += latency_avg[i];
 				if (latency_avg[i] > max_latency) {
@@ -375,7 +375,7 @@ void read_gstreamerpipe_stream(MppPacket *packet, int gst_udp_port, const VideoC
 		if ((now-period_start) >= 1000) {
 			period_start = now;
 			osd_vars.bw_curr = (osd_vars.bw_curr + 1) % 10;
-			osd_vars.bw_stats[osd_vars.bw_curr] = bytes_received;
+			osd_vars.bw_stats[osd_vars.bw_curr] = bytes_received ;
 			bytes_received = 0;
 		}
         feed_packet_to_decoder(packet,frame->data(),frame->size());
