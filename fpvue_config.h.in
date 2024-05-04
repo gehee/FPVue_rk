@@ -1,0 +1,2 @@
+#define fpvue_VERSION_MAJOR @fpvue_VERSION_MAJOR@
+#define fpvue_VERSION_MINOR @fpvue_VERSION_MINOR@
