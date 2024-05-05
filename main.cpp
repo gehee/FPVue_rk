@@ -78,8 +78,8 @@ int video_zpos = 1;
 FILE *dvr_file = NULL;
 
 void init_buffer(MppFrame frame) {
-	output_list->video_frm_width = CODEC_ALIGN(mpp_frame_get_width(frame),16);
-	output_list->video_frm_height = CODEC_ALIGN(mpp_frame_get_height(frame),16);
+	output_list->video_frm_width = mpp_frame_get_width(frame);
+	output_list->video_frm_height = mpp_frame_get_height(frame);
 	RK_U32 hor_stride = mpp_frame_get_hor_stride(frame);
 	RK_U32 ver_stride = mpp_frame_get_ver_stride(frame);
 	MppFrameFormat fmt = mpp_frame_get_fmt(frame);
@@ -156,7 +156,7 @@ void init_buffer(MppFrame frame) {
 	ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_EXT_BUF_GROUP, mpi.frm_grp);
 	ret = mpi.mpi->control(mpi.ctx, MPP_DEC_SET_INFO_CHANGE_READY, NULL);
 
-	ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, output_list->video_frm_width, output_list->video_frm_height, video_zpos);
+	ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, osd_vars.video_width, osd_vars.video_height, video_zpos);
 	assert(ret >= 0);
 }
 

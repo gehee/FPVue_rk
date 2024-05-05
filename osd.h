@@ -19,8 +19,8 @@ struct osd_vars {
 	// Video Feed
 	int bw_curr;
 	long long bw_stats[10];
-	unsigned int video_width;
-	unsigned int video_height;
+	uint32_t video_width;
+	uint32_t video_height;
 
 	// Mavlink WFB-ng
     bool enable_wfbng;

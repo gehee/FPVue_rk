@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.1)
 
-project(fpvue VERSION 0.11)
+project(fpvue VERSION 0.12)
 
 set(CMAKE_CXX_STANDARD 17)
 
