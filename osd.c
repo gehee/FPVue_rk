@@ -264,7 +264,7 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
     struct timespec current_timestamp;
     if (!clock_gettime(CLOCK_MONOTONIC_COARSE, &current_timestamp)) {
       double interval = getTimeInterval(&current_timestamp, &last_timestamp);
-      if (telemetry_arm > 1700){
+      if (osd_vars.telemetry_arm > 1700){
         seconds = seconds + interval;
       }
       if (interval > 1) {
