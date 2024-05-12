@@ -6,7 +6,6 @@
 #include "mavlink.h"
 #include "icons/icons.h"
 
-#define BILLION 1000000000L
 #define WFB_LINK_LOST 1
 #define WFB_LINK_JAMMED 2
 
@@ -265,19 +264,15 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
     struct timespec current_timestamp;
     if (!clock_gettime(CLOCK_MONOTONIC_COARSE, &current_timestamp)) {
       double interval = getTimeInterval(&current_timestamp, &last_timestamp);
+      if (telemetry_arm > 1700){
+        seconds = seconds + interval;
+      }
       if (interval > 1) {
         last_timestamp = current_timestamp;
         rx_rate = ((float)stats_rx_bytes+(((float)stats_rx_bytes*25)/100)) / 1024.0f * 8;
         stats_rx_bytes = 0;
       }
     }
-
-    uint64_t diff;
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    sleep(1);
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    diff = BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 
     char hud_frames_rx[32];
     if (osd_vars.telemetry_level > 1){
@@ -289,9 +284,6 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
 		sprintf(msg, "TIME:%.2d:%.2d", minutes,seconds);
 		cairo_move_to(cr, buf->width - 300, buf->height - 90);
 		cairo_show_text(cr, msg);
-		if (osd_vars.telemetry_arm > 1700){
-			seconds = seconds + diff/1000000000;
-		}
 		if(seconds > 59){
 			seconds = 0;
 			++minutes;  
