@@ -127,6 +127,14 @@ void* __MAVLINK_THREAD__(void* arg) {
           case MAVLINK_MSG_ID_HEARTBEAT:
             // handle_heartbeat(&message);
             break;
+		
+          case MAVLINK_MSG_ID_RAW_IMU:
+            {
+              mavlink_raw_imu_t imu;
+              mavlink_msg_raw_imu_decode(&message, &imu);
+              osd_vars.telemetry_raw_imu = imu.temperature;
+            }
+            break;
 
           case MAVLINK_MSG_ID_SYS_STATUS:
             {
