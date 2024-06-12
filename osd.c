@@ -208,7 +208,10 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
     sprintf(msg, "THR:%.00f%%", osd_vars.telemetry_throttle);
     cairo_move_to(cr, 40, buf->height - 120);
     cairo_show_text(cr, msg);
-    
+    sprintf(msg, "TEMP:%.00fC", osd_vars.telemetry_raw_imu/100);
+    cairo_move_to(cr, 40, buf->height - 150);
+    cairo_show_text(cr, msg);
+
 	if (osd_vars.telemetry_level > 1){
 		sprintf(msg, "SATS:%.00f", osd_vars.telemetry_sats);
 		cairo_move_to(cr,buf->width - 140, buf->height - 30);
