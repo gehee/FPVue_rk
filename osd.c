@@ -262,11 +262,7 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
     sprintf(msg, "RSSI:%.00f", osd_vars.telemetry_rssi);
     cairo_move_to(cr, x_center - 50, buf->height - 30);
     cairo_show_text(cr,  msg);
-
-    struct timespec current_timestamp;
-    if (!clock_gettime(CLOCK_MONOTONIC_COARSE, &current_timestamp)) {
-      double interval = getTimeInterval(&current_timestamp, &last_timestamp);
-	cairo_fill(cr);
+    cairo_fill(cr);
 }
 
 int osd_thread_signal;
