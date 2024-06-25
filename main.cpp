@@ -39,7 +39,7 @@ extern "C" {
 #include "mavlink.h"
 }
 
-
+#include "minimp4.h"
 #include "gstrtpreceiver.h"
 #include "scheduling_helper.hpp"
 #include "time_util.h"
@@ -75,7 +75,16 @@ pthread_cond_t video_cond;
 
 int video_zpos = 1;
 
+VideoCodec codec = VideoCodec::H265;
 FILE *dvr_file = NULL;
+MP4E_mux_t *mux ;
+mp4_h26x_writer_t mp4wr;
+
+int write_callback(int64_t offset, const void *buffer, size_t size, void *token){
+    FILE *f = (FILE*)token;
+    fseek(f, offset, SEEK_SET);
+    return fwrite(buffer, 1, size, f) != size;
+}
 
 void init_buffer(MppFrame frame) {
 	output_list->video_frm_width = mpp_frame_get_width(frame);
@@ -158,10 +167,18 @@ void init_buffer(MppFrame frame) {
 
 	ret = modeset_perform_modeset(drm_fd, output_list, output_list->video_request, &output_list->video_plane, mpi.frame_to_drm[0].fb_id, osd_vars.video_width, osd_vars.video_height, video_zpos);
 	assert(ret >= 0);
-}
 
-void *__DVR_THREAD__(void *param) {
-
+	// dvr setup
+	if (dvr_file != NULL){
+		printf("setting up dvr and mux\n");
+		mux = MP4E_open(0 /*sequential_mode*/, 0 /*fragmentation_mode*/, dvr_file, write_callback);
+		if (MP4E_STATUS_OK != mp4_h26x_write_init(&mp4wr, mux, output_list->video_frm_width, output_list->video_frm_height, codec==VideoCodec::H265))
+		{
+			printf("error: mp4_h26x_write_init failed\n");
+			mux = NULL;
+			dvr_file = NULL;
+		}
+	}
 }
 
 // __FRAME_THREAD__
@@ -352,8 +369,13 @@ bool feed_packet_to_decoder(MppPacket *packet,void* data_p,int data_len){
         }
         usleep(2 * 1000);
     }
-	if (dvr_file!=NULL){
-		fwrite(data_p, data_len, 1, dvr_file);
+
+	if (dvr_file!=NULL && mux != NULL){
+		int res = mp4_h26x_write_nal(&mp4wr, (const unsigned char*)data_p, data_len, -1);
+		// if (MP4E_STATUS_OK != res) {
+		// 	// This is expected to fail until a keyframe arrives.
+		// 	//printf("mp4_h26x_write_nal failed with %d", res);
+		// }
 	}
     return true;
 }
@@ -478,7 +500,6 @@ int main(int argc, char **argv)
 	uint16_t mode_width = 0;
 	uint16_t mode_height = 0;
 	uint32_t mode_vrefresh = 0;
-	VideoCodec codec = VideoCodec::H265;
 	// Load console arguments
 	__BeginParseConsoleArguments__(printHelp) 
 	
@@ -499,7 +520,7 @@ int main(int argc, char **argv)
 
 	__OnArgument("--dvr") {
 		if ((dvr_file = fopen(__ArgValue,"w")) == NULL){
-			printf("ERROR: unable to open %s\n", dvr_file);
+			printf("ERROR: unable to open %s\n", dvr_file);	
 			return -1;
 		}
 		continue;
@@ -647,6 +668,8 @@ int main(int argc, char **argv)
 
 	// Close dvr file
 	if (dvr_file != NULL) {
+		MP4E_close(mux);
+       	mp4_h26x_write_close(&mp4wr);
 		fclose(dvr_file);
 	}
 
