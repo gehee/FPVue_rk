@@ -50,8 +50,8 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
 	surface = cairo_image_surface_create_for_data(buf->map, CAIRO_FORMAT_ARGB32, buf->width, buf->height, buf->stride);
 	cr = cairo_create (surface);
 
-	cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-	cairo_set_font_size (cr, 20);
+	cairo_select_font_face (cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+	cairo_set_font_size (cr, 22);
 
 	if (osd_vars.enable_video || osd_vars.enable_wfbng ) {
 		// stats height
