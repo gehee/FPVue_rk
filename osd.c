@@ -141,7 +141,7 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
 		return;
 	}
 
-	cairo_set_source_rgba (cr, 255.0, 255.0, 255.0, 1);
+	cairo_set_source_rgba (cr, 0.0, 255.0, 255.0, 1);
 	// Mavlink elements
 	uint32_t x_center = buf->width / 2;
 	if (osd_vars.telemetry_level > 1){
@@ -186,13 +186,13 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
 
 		// OSD telemetry
 		sprintf(msg, "ALT:%.00fM", osd_vars.telemetry_altitude);
-		cairo_move_to(cr, x_center + (20) + 260, buf->height / 2 - 8);
+		cairo_move_to(cr, x_center + (20) + 260, buf->height - 60);
 		cairo_show_text(cr, msg);
 		sprintf(msg, "SPD:%.00fKM/H", osd_vars.telemetry_gspeed);
-		cairo_move_to(cr, x_center - (16 * 3) - 360, buf->height / 2 - 8);
+		cairo_move_to(cr, x_center - 350, buf->height - 60);
 		cairo_show_text(cr, msg);
 		sprintf(msg, "VSPD:%.00fM/S", osd_vars.telemetry_vspeed);
-		cairo_move_to(cr, x_center + (20) + 260, buf->height / 2 + 22);
+		cairo_move_to(cr, x_center + (20) + 260, buf->height - 30);
 		cairo_show_text(cr, msg);
 	}
 
@@ -266,21 +266,6 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
     struct timespec current_timestamp;
     if (!clock_gettime(CLOCK_MONOTONIC_COARSE, &current_timestamp)) {
       double interval = getTimeInterval(&current_timestamp, &last_timestamp);
-      if (osd_vars.telemetry_arm > 1700){
-        seconds = seconds + interval;
-      }
-    }
-	sprintf(msg, "TIME:%.2d:%.2d", minutes,seconds);
-	cairo_move_to(cr, buf->width - 300, buf->height - 90);
-	cairo_show_text(cr, msg);
-	if(seconds > 59){
-		seconds = 0;
-		++minutes;  
-	}
-	if(minutes > 59){
-		seconds = 0;
-		minutes = 0;
-	}
 	cairo_fill(cr);
 }
 
