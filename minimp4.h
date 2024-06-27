@@ -2322,11 +2322,10 @@ static int mp4_h265_write_nal(mp4_h26x_writer_t *h, const unsigned char *nal, in
 
 uint64_t last_ms = 0;
 
-int mp4_h26x_write_nal(mp4_h26x_writer_t *h, const unsigned char *nal, int length, int duration)
+int mp4_h26x_write_nal(mp4_h26x_writer_t *h, const unsigned char *nal, int length, int timeStamp90kHz_next)
 {
     const unsigned char *eof = nal + length;
     int payload_type, sizeof_nal, err = MP4E_STATUS_OK;
-    uint64_t cur_time = get_time_ms();
     for (;;nal++)
     {
 #if MINIMP4_TRANSCODE_SPS_ID
@@ -2337,11 +2336,7 @@ int mp4_h26x_write_nal(mp4_h26x_writer_t *h, const unsigned char *nal, int lengt
             break;
         if (h->is_hevc)
         {
-            if (duration==-1){
-                int dur = cur_time - last_ms;
-                duration = (dur/1000.0)*90000.0;
-            }
-            ERR(mp4_h265_write_nal(h, nal, sizeof_nal, duration));
+            ERR(mp4_h265_write_nal(h, nal, sizeof_nal, timeStamp90kHz_next));
             continue;
         }
         payload_type = nal[0] & 31;
@@ -2407,7 +2402,7 @@ exit_with_free:
                     sample_kind = MP4E_SAMPLE_CONTINUATION;
                 else if (payload_type == 5)
                     sample_kind = MP4E_SAMPLE_RANDOM_ACCESS;
-                err = MP4E_put_sample(h->mux, h->mux_track_id, nal2, sizeof_nal, duration, sample_kind);
+                err = MP4E_put_sample(h->mux, h->mux_track_id, nal2, sizeof_nal, timeStamp90kHz_next, sample_kind);
             }
             break;
         }
@@ -2451,11 +2446,7 @@ exit_with_free:
                         sample_kind = MP4E_SAMPLE_CONTINUATION;
                     else if (payload_type == 5)
                         sample_kind = MP4E_SAMPLE_RANDOM_ACCESS;
-                    if (duration==-1){
-                        int dur = cur_time - last_ms;
-                        duration = (dur/1000)*90000;
-                    }
-                    err = MP4E_put_sample(h->mux, h->mux_track_id, tmp, 4 + sizeof_nal, duration, sample_kind);
+                    err = MP4E_put_sample(h->mux, h->mux_track_id, tmp, 4 + sizeof_nal, timeStamp90kHz_next, sample_kind);
                     free(tmp);
                 }
                 break;
@@ -2463,9 +2454,6 @@ exit_with_free:
 #endif
         if (err)
             break;
-    }
-    if (payload_type != 9) {
-        last_ms = cur_time;
     }
     return err;
 }

@@ -15,6 +15,10 @@
 #include <unistd.h>
 #include <inttypes.h>
 #include <signal.h>
+#include <fstream>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -74,6 +78,8 @@ pthread_mutex_t video_mutex;
 pthread_cond_t video_cond;
 
 int video_zpos = 1;
+int video_framerate = -1;
+int mp4_fragmentation_mode = 0;
 
 VideoCodec codec = VideoCodec::H265;
 FILE *dvr_file = NULL;
@@ -171,7 +177,7 @@ void init_buffer(MppFrame frame) {
 	// dvr setup
 	if (dvr_file != NULL){
 		printf("setting up dvr and mux\n");
-		mux = MP4E_open(0 /*sequential_mode*/, 0 /*fragmentation_mode*/, dvr_file, write_callback);
+		mux = MP4E_open(0 /*sequential_mode*/, mp4_fragmentation_mode, dvr_file, write_callback);
 		if (MP4E_STATUS_OK != mp4_h26x_write_init(&mp4wr, mux, output_list->video_frm_width, output_list->video_frm_height, codec==VideoCodec::H265))
 		{
 			printf("error: mp4_h26x_write_init failed\n");
@@ -349,6 +355,42 @@ void sig_handler(int signum)
 	osd_thread_signal++;
 }
 
+std::queue<std::shared_ptr<std::vector<uint8_t>>> dvrQueue;
+std::mutex mtx;
+std::condition_variable cv;
+
+void *__DVR_THREAD__(void *param) {
+	while (true) {
+		std::unique_lock<std::mutex> lock(mtx);
+		cv.wait(lock, [dvrQueue, signal_flag] { return !dvrQueue.empty() || signal_flag; });
+		if (signal_flag && dvrQueue.empty()) {
+			break;
+		}
+		if (!dvrQueue.empty()) {
+			std::shared_ptr<std::vector<uint8_t>> frame = dvrQueue.front();
+			dvrQueue.pop();
+			lock.unlock();
+			// Process the frame
+			auto res = mp4_h26x_write_nal(&mp4wr, frame->data(), frame->size(), 90000/video_framerate);
+			if (!(MP4E_STATUS_OK == res || MP4E_STATUS_BAD_ARGUMENTS == res)) {
+				printf("mp4_h26x_write_nal failed with error %d\n", res);
+			}
+		}
+	}
+	MP4E_close(mux);
+	mp4_h26x_write_close(&mp4wr);
+	fclose(dvr_file);
+	printf("DVR thread done.\n");
+}
+
+void enqueueDvrPacket(std::shared_ptr<std::vector<uint8_t>> frame) {
+	{
+		std::lock_guard<std::mutex> lock(mtx);
+		dvrQueue.push(frame);
+	}
+	cv.notify_one();
+}
+
 int decoder_stalled_count=0;
 bool feed_packet_to_decoder(MppPacket *packet,void* data_p,int data_len){
     mpp_packet_set_data(packet, data_p);
@@ -369,14 +411,6 @@ bool feed_packet_to_decoder(MppPacket *packet,void* data_p,int data_len){
         }
         usleep(2 * 1000);
     }
-
-	if (dvr_file!=NULL && mux != NULL){
-		int res = mp4_h26x_write_nal(&mp4wr, (const unsigned char*)data_p, data_len, -1);
-		// if (MP4E_STATUS_OK != res) {
-		// 	// This is expected to fail until a keyframe arrives.
-		// 	//printf("mp4_h26x_write_nal failed with %d", res);
-		// }
-	}
     return true;
 }
 
@@ -401,6 +435,8 @@ void read_gstreamerpipe_stream(MppPacket *packet, int gst_udp_port, const VideoC
 			bytes_received = 0;
 		}
         feed_packet_to_decoder(packet,frame->data(),frame->size());
+
+		enqueueDvrPacket(frame);
     };
     receiver.start_receiving(cb);
     while (!signal_flag){
@@ -482,6 +518,10 @@ void printHelp() {
     "\n"
     "    --dvr             		- Save the video feed (no osd) to the provided filename\n"
     "\n"
+    "    --dvr-framerate        - Force the dvr framerate fro smoother dvr\n"
+    "\n"
+    "    --dvr-fmp4            	- Save the video feed as a fragmented mp4\n"
+    "\n"
     "    --screen-mode   		- Override default screen mode. ex:1920x1080@120\n"
     "\n", fpvue_VERSION_MAJOR , fpvue_VERSION_MINOR
   );
@@ -523,6 +563,16 @@ int main(int argc, char **argv)
 			printf("ERROR: unable to open %s\n", dvr_file);	
 			return -1;
 		}
+		continue;
+	}
+
+	__OnArgument("--dvr-framerate") {
+		video_framerate = atoi(__ArgValue);
+		continue;
+	}
+
+	__OnArgument("--dvr-fmp4") {
+		mp4_fragmentation_mode = 1;
 		continue;
 	}
 
@@ -591,6 +641,11 @@ int main(int argc, char **argv)
 
 	__EndParseConsoleArguments__
 
+	if (dvr_file != NULL && video_framerate < 0 ) {
+		printf("--dvr-framerate must be provided when dvr is enabled.\n");
+		return 0;
+	}
+
 	printf("FPVue Rockchip %d.%d\n", fpvue_VERSION_MAJOR , fpvue_VERSION_MINOR);
 
 	if (enable_osd == 0 ) {
@@ -646,7 +701,10 @@ int main(int argc, char **argv)
 	ret = pthread_cond_init(&video_cond, NULL);
 	assert(!ret);
 
-	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink;
+	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink, tid_dvr;
+	if (dvr_file != NULL) {
+		ret = pthread_create(&tid_dvr, NULL, __DVR_THREAD__, NULL);
+	}
 	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 	assert(!ret);
 	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, NULL);
@@ -665,13 +723,6 @@ int main(int argc, char **argv)
 
 	////////////////////////////////////////////// MAIN LOOP
     read_gstreamerpipe_stream((void**)packet, listen_port, codec);
-
-	// Close dvr file
-	if (dvr_file != NULL) {
-		MP4E_close(mux);
-       	mp4_h26x_write_close(&mp4wr);
-		fclose(dvr_file);
-	}
 
 	////////////////////////////////////////////// MPI CLEANUP
 
@@ -699,6 +750,10 @@ int main(int argc, char **argv)
 	}
 	if (enable_osd) {
 		ret = pthread_join(tid_osd, NULL);
+		assert(!ret);
+	}
+	if (dvr_file != NULL ){
+		ret = pthread_join(tid_dvr, NULL);
 		assert(!ret);
 	}
 
