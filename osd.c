@@ -108,7 +108,7 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
 			}
 			avg_bw = avg_bw / avg_cnt;
 			if (avg_bw < 1000) {
-				sprintf(msg, "%.2f Kbps", avg_bw / 125 );
+				sprintf(msg, "%.2f Kbps", avg_bw / 75 );
 			} else {
 				sprintf(msg, "%.2f Mbps", avg_bw / 125000 );
 			}
