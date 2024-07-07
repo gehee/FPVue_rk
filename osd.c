@@ -110,7 +110,7 @@ void modeset_paint_buffer(struct modeset_buf *buf) {
 			if (avg_bw < 1000) {
 				sprintf(msg, "%.2f Kbps", avg_bw / 75 );
 			} else {
-				sprintf(msg, "%.2f Mbps", avg_bw / 125000 );
+				sprintf(msg, "%.2f Mbps", avg_bw / 75000 );
 			}
 			row_count++;
 			cairo_set_source_surface (cr, net_icon, osd_x+22, stats_top_margin+row_count*stats_row_height-19);
