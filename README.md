@@ -1,5 +1,10 @@
 # FPVue_rk
 
+> [!IMPORTANT]
+> August 2024: Unfortunately, this repository is now in an unmaintained state.
+> I don't have the time to maitain it like I would like to and there was not enough interest from external developers to contribute to it.
+> Feel free to fork it and take over but for now it will stay as is.
+
 WFB-ng client (Video Decoder) for Rockchip platform powered by the [Rockchip MPP library](https://github.com/rockchip-linux/mpp).
 It also displays a simple cairo based OSD that shows the bandwidth, decoding latency, and framerate of the decoded video, and wfb-ng link statistics.
 
